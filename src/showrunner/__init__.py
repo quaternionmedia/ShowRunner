@@ -5,6 +5,6 @@ import pluggy
 hookimpl = pluggy.HookimplMarker("showrunner")
 """Marker to be imported and used in plugins (and for own implementations)."""
 
-from .app import ShowRunnerApp
+from .app import ShowRunner
 
-__all__ = ["hookimpl", "ShowRunnerApp"]
+__all__ = ["hookimpl", "ShowRunner"]

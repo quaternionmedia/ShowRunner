@@ -47,6 +47,14 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_command(self, command_name: str, **kwargs):
+        """Receive commands issued by the ShowRunner system.
+
+        :param command_name: Name of the command (e.g. "start_cue", "stop_cue")
+        :param kwargs: Additional command data
+        """
+
+    @hookspec
     def showrunner_get_commands(self) -> list:
         """Return CLI commands this plugin provides.
 
@@ -54,4 +62,36 @@ class ShowRunnerSpec:
             name: Command name
             description: Brief help text
             callback: Callable to invoke
+        """
+
+    @hookspec
+    def showrunner_query(self, query_name: str, **kwargs):
+        """Receive queries from the ShowRunner system.
+
+        :param query_name: Name of the query (e.g. "get_cue_status")
+        :param kwargs: Additional query data
+        :returns: Response data for the query
+        """
+
+    @hookspec
+    def showrunner_event(self, event_name: str, **kwargs):
+        """Receive events emitted by the ShowRunner system.
+
+        :param event_name: Name of the event (e.g. "cue_started", "cue_completed")
+        :param kwargs: Additional event data
+        """
+
+    @hookspec
+    def showrunner_subscribe(self, event_name: str):
+        """Subscribe to events emitted by the ShowRunner system.
+
+        :param event_name: Name of the event to subscribe to (e.g. "cue_started")
+        """
+
+    @hookspec
+    def showrunner_publish(self, event_name: str, **kwargs):
+        """Publish an event to the ShowRunner system.
+
+        :param event_name: Name of the event to publish (e.g. "cue_started")
+        :param kwargs: Additional event data
         """

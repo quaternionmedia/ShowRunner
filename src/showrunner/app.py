@@ -25,7 +25,7 @@ def get_plugin_manager() -> pluggy.PluginManager:
     return pm
 
 
-class ShowRunnerApp:
+class ShowRunner:
     """Main ShowRunner application.
 
     Holds the plugin manager and the FastAPI app instance.
