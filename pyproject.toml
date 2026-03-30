@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "A collection of tools for live performances including script parsing, cue management, and more."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["fastapi>=0.135.2", "pluggy>=1.6.0", "typer>=0.24.1"]
+dependencies = [
+    "fastapi>=0.135.2",
+    "pluggy>=1.6.0",
+    "sqlmodel>=0.0.37",
+    "typer>=0.24.1",
+]
 
 [project.scripts]
 sr = "showrunner.cli:cli"
@@ -14,4 +19,9 @@ requires = ["uv_build>=0.11.2,<0.12"]
 build-backend = "uv_build"
 
 [dependency-groups]
-dev = ["black>=26.3.1", "ruff>=0.15.8", "uvicorn>=0.42.0"]
+dev = [
+    "black>=26.3.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.8",
+    "uvicorn>=0.42.0",
+]

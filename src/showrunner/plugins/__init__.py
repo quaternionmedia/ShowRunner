@@ -11,6 +11,7 @@ from .prompter import ShowPrompterPlugin
 from .comms import ShowCommsPlugin
 from .cmd import ShowCmdPlugin
 from .recorder import ShowRecorderPlugin
+from .db import ShowDBPlugin
 
 
 def get_builtin_plugins() -> list[type]:
@@ -27,4 +28,5 @@ def get_builtin_plugins() -> list[type]:
         ShowCommsPlugin,
         ShowCmdPlugin,
         ShowRecorderPlugin,
+        ShowDBPlugin,
     ]
