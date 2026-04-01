@@ -119,7 +119,7 @@ class ShowDBPlugin:
             'version': '0.1.0',
         }
 
-    @showrunner.hookimpl
+    @showrunner.hookimpl(tryfirst=True)
     def showrunner_startup(self, app):
         global _db
         _db = ShowDatabase()

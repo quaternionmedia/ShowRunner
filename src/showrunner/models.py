@@ -26,6 +26,12 @@ class Show(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 
+    def __str__(self) -> str:
+        parts = [self.name or '']
+        if self.venue:
+            parts.append(f'@ {self.venue}')
+        return ' '.join(parts)
+
     # Relationships
     scripts: list['Script'] = Relationship(back_populates='show')
     cue_lists: list['CueList'] = Relationship(back_populates='show')
@@ -48,6 +54,9 @@ class Script(SQLModel, table=True):
 
     show: Optional[Show] = Relationship(back_populates='scripts')
 
+    def __str__(self) -> str:
+        return self.title or f'Script {self.id}'
+
 
 class CueList(SQLModel, table=True):
     """A named cue list within a show (e.g. 'Main', 'Rehearsal')."""
@@ -62,6 +71,9 @@ class CueList(SQLModel, table=True):
 
     show: Optional[Show] = Relationship(back_populates='cue_lists')
     cues: list['Cue'] = Relationship(back_populates='cue_list')
+
+    def __str__(self) -> str:
+        return self.name or f'CueList {self.id}'
 
 
 class Cue(SQLModel, table=True):
@@ -88,6 +100,14 @@ class Cue(SQLModel, table=True):
     cue_list: Optional[CueList] = Relationship(back_populates='cues')
     cue_logs: list['CueLog'] = Relationship(back_populates='cue')
 
+    def __str__(self) -> str:
+        label = f'{self.number}'
+        if self.point:
+            label += f'.{self.point}'
+        if self.name:
+            label += f' {self.name}'
+        return label
+
 
 class Actor(SQLModel, table=True):
     """An actor / performer in a show with optional mixer channel assignment."""
@@ -102,6 +122,12 @@ class Actor(SQLModel, table=True):
     active: bool = Field(default=True)
 
     show: Optional[Show] = Relationship(back_populates='actors')
+
+    def __str__(self) -> str:
+        label = self.name or f'Actor {self.id}'
+        if self.role:
+            label += f' ({self.role})'
+        return label
 
 
 class CueLog(SQLModel, table=True):
@@ -119,6 +145,9 @@ class CueLog(SQLModel, table=True):
     show: Optional[Show] = Relationship(back_populates='cue_logs')
     cue: Optional[Cue] = Relationship(back_populates='cue_logs')
 
+    def __str__(self) -> str:
+        return f'Log {self.id} @ {self.triggered_at}'
+
 
 class Config(SQLModel, table=True):
     """Key-value configuration scoped to a show."""
@@ -131,3 +160,6 @@ class Config(SQLModel, table=True):
     value: str | None = None
 
     show: Optional[Show] = Relationship(back_populates='configs')
+
+    def __str__(self) -> str:
+        return f'Config {self.key}={self.value}'

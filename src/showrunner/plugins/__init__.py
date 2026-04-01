@@ -12,6 +12,7 @@ from .comms import ShowCommsPlugin
 from .cmd import ShowCmdPlugin
 from .recorder import ShowRecorderPlugin
 from .db import ShowDBPlugin
+from .admin import ShowAdminPlugin
 
 
 def get_builtin_plugins() -> list[type]:
@@ -29,4 +30,5 @@ def get_builtin_plugins() -> list[type]:
         ShowCmdPlugin,
         ShowRecorderPlugin,
         ShowDBPlugin,
+        ShowAdminPlugin,
     ]
