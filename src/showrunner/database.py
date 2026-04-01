@@ -7,6 +7,7 @@ for the SQLite backend. Plugins and application code should use
 
 from pathlib import Path
 
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .models import Show
@@ -32,8 +33,26 @@ class ShowDatabase:
         )
 
     def create_schema(self) -> None:
-        """Create all tables that don't already exist."""
+        """Create all tables that don't already exist, then migrate columns."""
         SQLModel.metadata.create_all(self.engine)
+        self._migrate_columns()
+
+    def _migrate_columns(self) -> None:
+        """Add any missing columns to existing tables."""
+        inspector = inspect(self.engine)
+        for table in SQLModel.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {col['name'] for col in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in existing:
+                    col_type = column.type.compile(self.engine.dialect)
+                    with self.engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                f'ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}'
+                            )
+                        )
 
     def session(self) -> Session:
         """Return a new SQLModel ``Session`` bound to the engine."""
