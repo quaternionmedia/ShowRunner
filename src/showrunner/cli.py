@@ -45,7 +45,7 @@ def start():
     show = ShowRunner()
     show.startup()
     try:
-        run(show.api, host="0.0.0.0", port=8000)
+        run(show.api, host='0.0.0.0', port=8000)
     except KeyboardInterrupt:
         pass
     finally:
