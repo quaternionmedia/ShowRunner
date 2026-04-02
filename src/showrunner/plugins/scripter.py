@@ -135,18 +135,26 @@ def _build_page(db: ShowDatabase) -> None:
             """Render a draggable, editable cue badge."""
             color = LAYER_COLORS.get(c['layer'], 'grey')
             label_text = f'{c["layer"][0]}{c["number"]}'
-            badge = ui.badge(
-                label_text,
-                color=color,
-            ).classes('mr-1 cursor-grab select-none')
-            badge.tooltip(f'{c["layer"]} {c["number"]}: {c["name"] or ""}')
+            cue_id = c['id']
 
-            # Make draggable via HTML5 drag events
-            badge._props['draggable'] = True
-            badge.on(
-                'dragstart',
-                js_handler=f'(e) => {{ e.dataTransfer.setData("text/plain", "{c["id"]}"); e.dataTransfer.effectAllowed = "move"; }}',
+            # Draggable wrapper: native HTML element with draggable attribute.
+            # NiceGUI's ui.element renders as a Vue generic element where
+            # props become HTML attributes on plain divs.
+            wrapper = ui.element('span').classes(
+                'inline-flex cursor-grab select-none mr-1'
             )
+            wrapper._props['draggable'] = 'true'
+            wrapper.on(
+                'dragstart',
+                js_handler=f'(e) => {{ e.dataTransfer.setData("text/plain", "{cue_id}"); e.dataTransfer.effectAllowed = "move"; }}',
+            )
+
+            with wrapper:
+                badge = ui.badge(
+                    label_text,
+                    color=color,
+                )
+                badge.tooltip(f'{c["layer"]} {c["number"]}: {c["name"] or ""}')
 
             with ui.menu().props('anchor="bottom left" self="top left"') as menu:
                 with ui.card().classes('p-3 gap-2').style('min-width: 260px'):
@@ -309,7 +317,7 @@ def _build_page(db: ShowDatabase) -> None:
                                 'flex-wrap: nowrap; transition: background 0.15s;'
                             ) as line_row
                         ):
-                            # Drop target styling via JS
+                            # Drop target: dragover/dragleave for visual feedback
                             line_row.on(
                                 'dragover',
                                 js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }',
@@ -318,14 +326,28 @@ def _build_page(db: ShowDatabase) -> None:
                                 'dragleave',
                                 js_handler='(e) => { e.currentTarget.style.background = ""; }',
                             )
+                            # Drop: JS extracts cue id + char offset, emits to Python
                             line_row.on(
                                 'drop',
-                                lambda e, ln=line_num: _handle_drop(e, ln, 0),
-                                ['dataTransfer'],
-                            )
-                            line_row.on(
-                                'drop',
-                                js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = ""; }',
+                                handler=lambda e, ln=line_num: _handle_drop(e, ln),
+                                js_handler='''(e) => {
+                                    e.preventDefault();
+                                    e.currentTarget.style.background = "";
+                                    const cueId = e.dataTransfer.getData("text/plain");
+                                    if (!cueId) return;
+                                    let charOffset = 0;
+                                    const span = document.elementFromPoint(e.clientX, e.clientY);
+                                    const offsetAttr = span ? (span.closest('[data-offset]') || {}).dataset : {};
+                                    const segOffset = parseInt(offsetAttr.offset || '0', 10);
+                                    if (document.caretPositionFromPoint) {
+                                        const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+                                        if (pos) charOffset = segOffset + pos.offset;
+                                    } else if (document.caretRangeFromPoint) {
+                                        const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                                        if (range) charOffset = segOffset + range.startOffset;
+                                    }
+                                    emit({cue_id: cueId, char_offset: charOffset});
+                                }''',
                             )
 
                             # Line number
@@ -369,6 +391,7 @@ def _build_page(db: ShowDatabase) -> None:
                 """Create a clickable text span that reports character offset."""
                 el = ui.html(
                     f'<span style="white-space:pre-wrap; cursor:text"'
+                    f' data-offset="{segment_offset}"'
                     f'>{_escape(text)}</span>'
                 ).classes('font-mono text-sm')
 
@@ -508,12 +531,13 @@ def _build_page(db: ShowDatabase) -> None:
                 )
                 drop_zone.on(
                     'drop',
-                    lambda e: _handle_drop(e, None, None),
-                    ['dataTransfer'],
-                )
-                drop_zone.on(
-                    'drop',
-                    js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = ""; }',
+                    handler=lambda e: _handle_drop(e, None),
+                    js_handler='''(e) => {
+                        e.preventDefault();
+                        e.currentTarget.style.background = "";
+                        const cueId = e.dataTransfer.getData("text/plain");
+                        if (cueId) emit({cue_id: cueId});
+                    }''',
                 )
                 with drop_zone:
                     if not unpositioned:
@@ -640,22 +664,28 @@ def _build_page(db: ShowDatabase) -> None:
         def _handle_drop(
             e,
             line_num: int | None,
-            char_pos: int | None,
         ):
             """Handle a cue being dropped onto a script line or the unpositioned area."""
             try:
-                data = e.args.get('dataTransfer', {})
-                # NiceGUI wraps dataTransfer data under 'text/plain' or 'text'
-                cue_id_str = data.get('text/plain') or data.get('text', '')
+                # e.args comes from emit({cue_id: ..., char_offset: ...}) in the js_handler
+                args = e.args if isinstance(e.args, dict) else {}
+                cue_id_str = args.get('cue_id', '')
                 if not cue_id_str:
                     return
                 cue_id = int(cue_id_str)
             except (ValueError, TypeError, AttributeError):
                 return
 
+            char_pos = None
+            if line_num is not None:
+                char_pos = int(args.get('char_offset', 0))
+
             _update_cue(cue_id, script_line=line_num, script_char=char_pos)
             if line_num is not None:
-                ui.notify(f'Moved cue to line {line_num}')
+                msg = f'Moved cue to line {line_num}'
+                if char_pos:
+                    msg += f', char {char_pos}'
+                ui.notify(msg)
             else:
                 ui.notify('Cue unpositioned')
             refresh_all()
