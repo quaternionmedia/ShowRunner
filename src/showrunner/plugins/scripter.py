@@ -394,6 +394,8 @@ def _build_page(db: ShowDatabase) -> None:
                     f' data-offset="{segment_offset}"'
                     f'>{_escape(text)}</span>'
                 ).classes('font-mono text-sm')
+                # Force the NiceGUI wrapper to render as <span> instead of <div>
+                el._props['tag'] = 'span'
 
                 def _on_click(e, ln=ln, so=segment_offset):
                     char_offset = 0
@@ -422,10 +424,13 @@ def _build_page(db: ShowDatabase) -> None:
                 _make_clickable_span(line or '\u00a0', line_num, 0)
                 return
 
+            # Use an inline-flow container so text and chips don't create
+            # block-level breaks.  Flex containers blockify their children
+            # which causes unwanted line breaks for wrapped text.
             with (
-                ui.row()
-                .classes('items-center gap-0 flex-1')
-                .style('flex-wrap: wrap; align-items: baseline;')
+                ui.element('div')
+                .style('display: inline; line-height: 1.5;')
+                .classes('flex-1')
             ):
                 cursor = 0
                 for c in line_cues:
@@ -440,7 +445,7 @@ def _build_page(db: ShowDatabase) -> None:
                 if cursor < len(line):
                     _make_clickable_span(line[cursor:], line_num, cursor)
                 else:
-                    ui.label('\u00a0').classes('flex-1')
+                    ui.html('&nbsp;')
 
         def render_pagination():
             """Render page navigation controls."""
