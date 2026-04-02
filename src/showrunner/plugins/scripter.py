@@ -4,6 +4,8 @@ Provides a NiceGUI page at ``/script`` for viewing scripts and placing cues
 onto specific lines within the script text.
 """
 
+from html import escape as _escape
+
 from nicegui import ui
 from sqlmodel import select
 
@@ -85,6 +87,7 @@ def _build_page(db: ShowDatabase) -> None:
                         'name': c.name,
                         'layer': c.layer,
                         'script_line': c.script_line,
+                        'script_char': c.script_char,
                     }
                     for c in cues
                 ]
@@ -129,13 +132,21 @@ def _build_page(db: ShowDatabase) -> None:
 
         # ---- render helpers -------------------------------------------------
         def render_cue_chip(c: dict) -> None:
-            """Render an editable cue badge with a popover for editing fields."""
+            """Render a draggable, editable cue badge."""
             color = LAYER_COLORS.get(c['layer'], 'grey')
+            label_text = f'{c["layer"][0]}{c["number"]}'
             badge = ui.badge(
-                f'{c["layer"][0]}{c["number"]}',
+                label_text,
                 color=color,
-            ).classes('mr-1 cursor-pointer')
+            ).classes('mr-1 cursor-grab select-none')
             badge.tooltip(f'{c["layer"]} {c["number"]}: {c["name"] or ""}')
+
+            # Make draggable via HTML5 drag events
+            badge._props['draggable'] = True
+            badge.on(
+                'dragstart',
+                js_handler=f'(e) => {{ e.dataTransfer.setData("text/plain", "{c["id"]}"); e.dataTransfer.effectAllowed = "move"; }}',
+            )
 
             with ui.menu().props('anchor="bottom left" self="top left"') as menu:
                 with ui.card().classes('p-3 gap-2').style('min-width: 260px'):
@@ -258,11 +269,14 @@ def _build_page(db: ShowDatabase) -> None:
             cl_id = _get_or_create_cuelist(show_id)
             cues = _load_cues(cl_id)
 
-            # Index positioned cues by line number
+            # Index positioned cues by (line, char)
             cues_by_line: dict[int, list[dict]] = {}
             for c in cues:
                 if c['script_line'] is not None:
                     cues_by_line.setdefault(c['script_line'], []).append(c)
+            # Sort cues within each line by char position
+            for line_cues in cues_by_line.values():
+                line_cues.sort(key=lambda c: c['script_char'] or 0)
 
             lines = content.split('\n')
             total_pages['v'] = max(1, (len(lines) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -275,8 +289,7 @@ def _build_page(db: ShowDatabase) -> None:
             detail_active = show_details['v']
 
             with container:
-                # When details are active, use a 2-column CSS grid so
-                # the annotation column is its own dedicated section.
+                # When details are active, use a 2-column CSS grid
                 grid_style = (
                     'display: grid; grid-template-columns: 1fr 40%; width: 100%;'
                     if detail_active
@@ -288,29 +301,40 @@ def _build_page(db: ShowDatabase) -> None:
                         line_num = i + 1
                         line_cues = cues_by_line.get(line_num, [])
 
-                        # -- Column 1: script line --
-                        with ui.row().classes(
-                            'items-start gap-0 hover:bg-gray-800 rounded group'
+                        # -- Column 1: script line (drop target) --
+                        with (
+                            ui.row()
+                            .classes('items-start gap-0 rounded group')
+                            .style(
+                                'flex-wrap: nowrap; transition: background 0.15s;'
+                            ) as line_row
                         ):
+                            # Drop target styling via JS
+                            line_row.on(
+                                'dragover',
+                                js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }',
+                            )
+                            line_row.on(
+                                'dragleave',
+                                js_handler='(e) => { e.currentTarget.style.background = ""; }',
+                            )
+                            line_row.on(
+                                'drop',
+                                lambda e, ln=line_num: _handle_drop(e, ln, 0),
+                                ['dataTransfer'],
+                            )
+                            line_row.on(
+                                'drop',
+                                js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = ""; }',
+                            )
+
+                            # Line number
                             ui.label(str(line_num)).classes(
                                 'text-grey-6 text-xs w-10 text-right mr-2 mt-1 select-none'
                             )
 
-                            for c in line_cues:
-                                render_cue_chip(c)
-
-                            ui.label(line or '\u00a0').classes(
-                                'font-mono text-sm whitespace-pre-wrap flex-1'
-                            )
-
-                            ui.button(
-                                icon='add',
-                                on_click=lambda _, ln=line_num: add_cue(ln),
-                            ).props('flat dense round size=xs').classes(
-                                'opacity-0 group-hover:opacity-100 ml-1'
-                            ).tooltip(
-                                'Add cue at this line'
-                            )
+                            # Build line content with inline cue chips at char positions
+                            _render_line_with_cues(line, line_num, line_cues)
 
                         # -- Column 2: cue detail annotations --
                         if detail_active:
@@ -325,12 +349,75 @@ def _build_page(db: ShowDatabase) -> None:
                                     for c in line_cues:
                                         render_cue_detail(c)
                             else:
-                                # Empty placeholder keeps grid aligned
                                 ui.element('div').style(
                                     'border-left: 1px solid rgba(255,255,255,0.1);'
                                 )
 
             render_pagination()
+
+        def _render_line_with_cues(
+            line: str, line_num: int, line_cues: list[dict]
+        ) -> None:
+            """Render a script line with cue chips interleaved at character positions.
+
+            The line text is split at each cue's ``script_char`` offset so chips
+            appear inline within the text.  Clicking a text segment places a new
+            cue at the exact character the user clicked.
+            """
+
+            def _make_clickable_span(text: str, ln: int, segment_offset: int) -> None:
+                """Create a clickable text span that reports character offset."""
+                el = ui.html(
+                    f'<span style="white-space:pre-wrap; cursor:text"'
+                    f'>{_escape(text)}</span>'
+                ).classes('font-mono text-sm')
+
+                def _on_click(e, ln=ln, so=segment_offset):
+                    char_offset = 0
+                    if isinstance(e.args, dict):
+                        char_offset = e.args.get('char_offset', 0)
+                    add_cue(ln, so + char_offset)
+
+                el.on(
+                    'click',
+                    handler=_on_click,
+                    js_handler='''(e) => {
+                        const span = e.target.closest('span') || e.target;
+                        let offset = 0;
+                        if (document.caretPositionFromPoint) {
+                            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+                            if (pos) offset = pos.offset;
+                        } else if (document.caretRangeFromPoint) {
+                            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                            if (range) offset = range.startOffset;
+                        }
+                        emit({char_offset: offset});
+                    }''',
+                )
+
+            if not line_cues:
+                _make_clickable_span(line or '\u00a0', line_num, 0)
+                return
+
+            with (
+                ui.row()
+                .classes('items-center gap-0 flex-1')
+                .style('flex-wrap: wrap; align-items: baseline;')
+            ):
+                cursor = 0
+                for c in line_cues:
+                    char_pos = c['script_char'] if c['script_char'] is not None else 0
+
+                    if char_pos > cursor:
+                        _make_clickable_span(line[cursor:char_pos], line_num, cursor)
+                        cursor = char_pos
+
+                    render_cue_chip(c)
+
+                if cursor < len(line):
+                    _make_clickable_span(line[cursor:], line_num, cursor)
+                else:
+                    ui.label('\u00a0').classes('flex-1')
 
         def render_pagination():
             """Render page navigation controls."""
@@ -388,7 +475,7 @@ def _build_page(db: ShowDatabase) -> None:
                     ).props('dense outlined').classes('w-24')
 
         def render_unpositioned():
-            """Render the list of cues without a script position."""
+            """Render the list of cues without a script position (drop target)."""
             container = unpositioned_ref['el']
             if container is None:
                 return
@@ -403,13 +490,43 @@ def _build_page(db: ShowDatabase) -> None:
             unpositioned = [c for c in cues if c['script_line'] is None]
 
             with container:
-                if not unpositioned:
-                    ui.label('No unpositioned cues.').classes('text-grey text-sm')
-                    return
-                for c in unpositioned:
-                    with ui.row().classes('items-center w-full'):
-                        render_cue_chip(c)
-                        ui.label(c['name'] or '(untitled)').classes('text-sm flex-1')
+                # The whole unpositioned area is a drop target
+                drop_zone = (
+                    ui.column()
+                    .classes(
+                        'w-full gap-1 min-h-[80px] rounded border border-dashed border-gray-600 p-2'
+                    )
+                    .style('transition: background 0.15s;')
+                )
+                drop_zone.on(
+                    'dragover',
+                    js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }',
+                )
+                drop_zone.on(
+                    'dragleave',
+                    js_handler='(e) => { e.currentTarget.style.background = ""; }',
+                )
+                drop_zone.on(
+                    'drop',
+                    lambda e: _handle_drop(e, None, None),
+                    ['dataTransfer'],
+                )
+                drop_zone.on(
+                    'drop',
+                    js_handler='(e) => { e.preventDefault(); e.currentTarget.style.background = ""; }',
+                )
+                with drop_zone:
+                    if not unpositioned:
+                        ui.label('Drop cues here to unposition them.').classes(
+                            'text-grey text-sm'
+                        )
+                    else:
+                        for c in unpositioned:
+                            with ui.row().classes('items-center w-full'):
+                                render_cue_chip(c)
+                                ui.label(c['name'] or '(untitled)').classes(
+                                    'text-sm flex-1'
+                                )
 
         def refresh_all():
             render_script_content()
@@ -485,10 +602,13 @@ def _build_page(db: ShowDatabase) -> None:
                 ui.button(
                     'Add Cue (no position)',
                     icon='add',
-                    on_click=lambda: add_cue(None),
+                    on_click=lambda: add_cue(None, None),
                 ).props('flat dense')
 
-        def add_cue(line_num: int | None = None):
+        def add_cue(
+            line_num: int | None = None,
+            char_pos: int | None = None,
+        ):
             show_id = selected_show_id['v']
             if show_id is None:
                 ui.notify('Select a show first.', type='warning')
@@ -504,14 +624,40 @@ def _build_page(db: ShowDatabase) -> None:
                     name='',
                     layer=layer,
                     script_line=line_num,
+                    script_char=char_pos if line_num is not None else None,
                 )
                 s.add(cue)
                 s.commit()
 
-            ui.notify(
-                f'Added {layer} cue {num}'
-                + (f' at line {line_num}' if line_num else '')
-            )
+            pos_desc = ''
+            if line_num is not None:
+                pos_desc = f' at line {line_num}'
+                if char_pos:
+                    pos_desc += f', char {char_pos}'
+            ui.notify(f'Added {layer} cue {num}{pos_desc}')
+            refresh_all()
+
+        def _handle_drop(
+            e,
+            line_num: int | None,
+            char_pos: int | None,
+        ):
+            """Handle a cue being dropped onto a script line or the unpositioned area."""
+            try:
+                data = e.args.get('dataTransfer', {})
+                # NiceGUI wraps dataTransfer data under 'text/plain' or 'text'
+                cue_id_str = data.get('text/plain') or data.get('text', '')
+                if not cue_id_str:
+                    return
+                cue_id = int(cue_id_str)
+            except (ValueError, TypeError, AttributeError):
+                return
+
+            _update_cue(cue_id, script_line=line_num, script_char=char_pos)
+            if line_num is not None:
+                ui.notify(f'Moved cue to line {line_num}')
+            else:
+                ui.notify('Cue unpositioned')
             refresh_all()
 
         # ---- layout ---------------------------------------------------------

@@ -96,6 +96,9 @@ class Cue(SQLModel, table=True):
     color: str | None = None
     sequence: int = Field(default=0)  # explicit ordering within the list
     script_line: int | None = None  # line number in the script (None = unpositioned)
+    script_char: int | None = (
+        None  # character offset within the line (None = start of line)
+    )
     created_at: datetime = Field(default_factory=_utcnow)
 
     cue_list: Optional[CueList] = Relationship(back_populates='cues')

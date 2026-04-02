@@ -140,6 +140,48 @@ def test_create_cuelist_with_cues(db: ShowDatabase):
         assert result[2].name == 'Blackout'
 
 
+def test_cue_script_position(db: ShowDatabase):
+    """Cues can store both line number and character offset."""
+    with db.session() as s:
+        show = Show(name='Position Test')
+        s.add(show)
+        s.commit()
+        s.refresh(show)
+        cl = CueList(show_id=show.id)
+        s.add(cl)
+        s.commit()
+        s.refresh(cl)
+        cue = Cue(
+            cue_list_id=cl.id,
+            number=5,
+            name='Mid-line',
+            layer='Sound',
+            script_line=42,
+            script_char=15,
+        )
+        s.add(cue)
+        s.commit()
+        cue_id = cue.id
+
+    with db.session() as s:
+        result = s.get(Cue, cue_id)
+        assert result.script_line == 42
+        assert result.script_char == 15
+
+    # Update to unpositioned
+    with db.session() as s:
+        result = s.get(Cue, cue_id)
+        result.script_line = None
+        result.script_char = None
+        s.add(result)
+        s.commit()
+
+    with db.session() as s:
+        result = s.get(Cue, cue_id)
+        assert result.script_line is None
+        assert result.script_char is None
+
+
 # ---------------------------------------------------------------------------
 # Actor
 # ---------------------------------------------------------------------------
