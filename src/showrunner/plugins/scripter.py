@@ -44,6 +44,9 @@ def _build_page(db: ShowDatabase) -> None:
         current_page: dict = {'v': 0}
         total_pages: dict = {'v': 1}
 
+        # toggle for cue detail annotations
+        show_details: dict = {'v': False}
+
         # refs to dynamic containers
         script_select_ref: dict = {'el': None}
         script_content_ref: dict = {'el': None}
@@ -189,6 +192,44 @@ def _build_page(db: ShowDatabase) -> None:
 
             badge.on('click', menu.open)
 
+        def render_cue_detail(c: dict) -> None:
+            """Render an inline editable cue detail with a dotted connector line."""
+            color = LAYER_COLORS.get(c['layer'], 'grey')
+            with ui.row().classes('items-center w-full').style('flex-shrink: 0'):
+                # Dotted connector line — stretches to fill gap
+                ui.element('div').style(
+                    f'flex: 1; min-width: 20px; border-top: 2px dotted {color}; opacity: 0.4;'
+                ).classes('self-center')
+                # Editable fields
+                num_input = (
+                    ui.number(
+                        value=c['number'],
+                        min=0,
+                        format='%d',
+                    )
+                    .props('dense borderless')
+                    .classes('w-16')
+                    .style(f'color: {color}; font-weight: bold;')
+                )
+                name_input = (
+                    ui.input(
+                        value=c['name'] or '',
+                        placeholder='name',
+                    )
+                    .props('dense borderless')
+                    .classes('w-32')
+                    .style(f'color: {color};')
+                )
+                # Save on blur / enter for both fields
+                for inp, field in [(num_input, 'number'), (name_input, 'name')]:
+
+                    def _save(_, cid=c['id'], f=field, el=inp):
+                        val = int(el.value) if f == 'number' and el.value else el.value
+                        _update_cue(cid, **{f: val})
+
+                    inp.on('blur', _save)
+                    inp.on('keydown.enter', _save)
+
         def render_script_content():
             """Render the current page of script lines with inline cue markers."""
             container = script_content_ref['el']
@@ -231,35 +272,63 @@ def _build_page(db: ShowDatabase) -> None:
             start = page * PAGE_SIZE
             end = min(start + PAGE_SIZE, len(lines))
 
-            with container:
-                for i in range(start, end):
-                    line = lines[i]
-                    line_num = i + 1
-                    with ui.row().classes(
-                        'w-full items-start gap-0 hover:bg-gray-800 rounded group'
-                    ):
-                        ui.label(str(line_num)).classes(
-                            'text-grey-6 text-xs w-10 text-right mr-2 mt-1 select-none'
-                        )
+            detail_active = show_details['v']
 
-                        # Cue markers for this line
-                        if line_num in cues_by_line:
-                            for c in cues_by_line[line_num]:
+            with container:
+                # When details are active, use a 2-column CSS grid so
+                # the annotation column is its own dedicated section.
+                grid_style = (
+                    'display: grid; grid-template-columns: 1fr 40%; width: 100%;'
+                    if detail_active
+                    else 'display: grid; grid-template-columns: 1fr; width: 100%;'
+                )
+                with ui.element('div').style(grid_style):
+                    for i in range(start, end):
+                        line = lines[i]
+                        line_num = i + 1
+                        line_cues = cues_by_line.get(line_num, [])
+
+                        # -- Column 1: script line --
+                        with ui.row().classes(
+                            'items-start gap-0 hover:bg-gray-800 rounded group'
+                        ):
+                            ui.label(str(line_num)).classes(
+                                'text-grey-6 text-xs w-10 text-right mr-2 mt-1 select-none'
+                            )
+
+                            for c in line_cues:
                                 render_cue_chip(c)
 
-                        ui.label(line or '\u00a0').classes(
-                            'font-mono text-sm whitespace-pre-wrap flex-1'
-                        )
+                            ui.label(line or '\u00a0').classes(
+                                'font-mono text-sm whitespace-pre-wrap flex-1'
+                            )
 
-                        # "Add cue here" button, visible on hover
-                        ui.button(
-                            icon='add',
-                            on_click=lambda _, ln=line_num: add_cue(ln),
-                        ).props('flat dense round size=xs').classes(
-                            'opacity-0 group-hover:opacity-100 ml-1'
-                        ).tooltip(
-                            'Add cue at this line'
-                        )
+                            ui.button(
+                                icon='add',
+                                on_click=lambda _, ln=line_num: add_cue(ln),
+                            ).props('flat dense round size=xs').classes(
+                                'opacity-0 group-hover:opacity-100 ml-1'
+                            ).tooltip(
+                                'Add cue at this line'
+                            )
+
+                        # -- Column 2: cue detail annotations --
+                        if detail_active:
+                            if line_cues:
+                                with (
+                                    ui.column()
+                                    .classes('gap-0 w-full')
+                                    .style(
+                                        'border-left: 1px solid rgba(255,255,255,0.1); padding-left: 4px;'
+                                    )
+                                ):
+                                    for c in line_cues:
+                                        render_cue_detail(c)
+                            else:
+                                # Empty placeholder keeps grid aligned
+                                ui.element('div').style(
+                                    'border-left: 1px solid rgba(255,255,255,0.1);'
+                                )
 
             render_pagination()
 
@@ -384,6 +453,11 @@ def _build_page(db: ShowDatabase) -> None:
             selected_layer['v'] = layer
             render_toolbar()
 
+        def toggle_details():
+            show_details['v'] = not show_details['v']
+            render_toolbar()
+            render_script_content()
+
         def render_toolbar():
             """Render the layer toolbar buttons with active state."""
             container = toolbar_ref['el']
@@ -400,6 +474,13 @@ def _build_page(db: ShowDatabase) -> None:
                         on_click=lambda _, ly=layer: set_layer(ly),
                         color=color,
                     ).props('dense unelevated' if is_active else 'dense outline')
+                ui.separator().props('vertical')
+                ui.button(
+                    'Cue Details',
+                    icon='visibility' if show_details['v'] else 'visibility_off',
+                    on_click=toggle_details,
+                    color='white' if show_details['v'] else None,
+                ).props('dense unelevated' if show_details['v'] else 'dense outline')
                 ui.separator().props('vertical')
                 ui.button(
                     'Add Cue (no position)',
