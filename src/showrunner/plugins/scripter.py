@@ -49,6 +49,7 @@ def _build_page(db: ShowDatabase) -> None:
         script_content_ref: dict = {'el': None}
         pagination_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
+        toolbar_ref: dict = {'el': None}
 
         # ---- helpers --------------------------------------------------------
         def _load_scripts():
@@ -104,7 +105,90 @@ def _build_page(db: ShowDatabase) -> None:
                     return 1
                 return max(c.number for c in cues) + 1
 
+        def _update_cue(cue_id: int, **fields) -> None:
+            """Update one or more fields on a cue."""
+            with db.session() as s:
+                cue = s.get(Cue, cue_id)
+                if cue is None:
+                    return
+                for k, v in fields.items():
+                    setattr(cue, k, v)
+                s.add(cue)
+                s.commit()
+
+        def _delete_cue(cue_id: int) -> None:
+            """Delete a cue by id."""
+            with db.session() as s:
+                cue = s.get(Cue, cue_id)
+                if cue is not None:
+                    s.delete(cue)
+                    s.commit()
+
         # ---- render helpers -------------------------------------------------
+        def render_cue_chip(c: dict) -> None:
+            """Render an editable cue badge with a popover for editing fields."""
+            color = LAYER_COLORS.get(c['layer'], 'grey')
+            badge = ui.badge(
+                f'{c["layer"][0]}{c["number"]}',
+                color=color,
+            ).classes('mr-1 cursor-pointer')
+            badge.tooltip(f'{c["layer"]} {c["number"]}: {c["name"] or ""}')
+
+            with ui.menu().props('anchor="bottom left" self="top left"') as menu:
+                with ui.card().classes('p-3 gap-2').style('min-width: 260px'):
+                    ui.label('Edit Cue').classes('text-subtitle2 font-bold')
+
+                    name_input = ui.input(
+                        label='Name',
+                        value=c['name'] or '',
+                    ).classes('w-full')
+
+                    number_input = ui.number(
+                        label='Number',
+                        value=c['number'],
+                        min=0,
+                        format='%d',
+                    ).classes('w-full')
+
+                    layer_select = ui.select(
+                        options=LAYERS,
+                        value=c['layer'],
+                        label='Layer',
+                    ).classes('w-full')
+
+                    with ui.row().classes('w-full justify-between items-center mt-2'):
+                        ui.button(
+                            icon='delete',
+                            color='red',
+                            on_click=lambda _, cid=c['id']: (
+                                _delete_cue(cid),
+                                menu.close(),
+                                ui.notify('Cue deleted'),
+                                refresh_all(),
+                            ),
+                        ).props('flat dense round').tooltip('Delete cue')
+
+                        ui.button(
+                            'Save',
+                            on_click=lambda _, cid=c['id']: (
+                                _update_cue(
+                                    cid,
+                                    name=name_input.value,
+                                    number=(
+                                        int(number_input.value)
+                                        if number_input.value
+                                        else c['number']
+                                    ),
+                                    layer=layer_select.value,
+                                ),
+                                menu.close(),
+                                ui.notify('Cue updated'),
+                                refresh_all(),
+                            ),
+                        ).props('flat dense')
+
+            badge.on('click', menu.open)
+
         def render_script_content():
             """Render the current page of script lines with inline cue markers."""
             container = script_content_ref['el']
@@ -161,13 +245,7 @@ def _build_page(db: ShowDatabase) -> None:
                         # Cue markers for this line
                         if line_num in cues_by_line:
                             for c in cues_by_line[line_num]:
-                                color = LAYER_COLORS.get(c['layer'], 'grey')
-                                ui.badge(
-                                    f'{c["layer"][0]}{c["number"]}',
-                                    color=color,
-                                ).classes('mr-1').tooltip(
-                                    f'{c["layer"]} {c["number"]}: {c["name"] or ""}'
-                                )
+                                render_cue_chip(c)
 
                         ui.label(line or '\u00a0').classes(
                             'font-mono text-sm whitespace-pre-wrap flex-1'
@@ -260,12 +338,8 @@ def _build_page(db: ShowDatabase) -> None:
                     ui.label('No unpositioned cues.').classes('text-grey text-sm')
                     return
                 for c in unpositioned:
-                    color = LAYER_COLORS.get(c['layer'], 'grey')
                     with ui.row().classes('items-center w-full'):
-                        ui.badge(
-                            f'{c["layer"][0]}{c["number"]}',
-                            color=color,
-                        )
+                        render_cue_chip(c)
                         ui.label(c['name'] or '(untitled)').classes('text-sm flex-1')
 
         def refresh_all():
@@ -305,6 +379,33 @@ def _build_page(db: ShowDatabase) -> None:
 
         def on_layer_change(e):
             selected_layer['v'] = e.value
+
+        def set_layer(layer: str):
+            selected_layer['v'] = layer
+            render_toolbar()
+
+        def render_toolbar():
+            """Render the layer toolbar buttons with active state."""
+            container = toolbar_ref['el']
+            if container is None:
+                return
+            container.clear()
+            with container:
+                ui.label('Current Layer:').classes('text-sm font-bold')
+                for layer in LAYERS:
+                    color = LAYER_COLORS[layer]
+                    is_active = selected_layer['v'] == layer
+                    ui.button(
+                        layer,
+                        on_click=lambda _, ly=layer: set_layer(ly),
+                        color=color,
+                    ).props('dense unelevated' if is_active else 'dense outline')
+                ui.separator().props('vertical')
+                ui.button(
+                    'Add Cue (no position)',
+                    icon='add',
+                    on_click=lambda: add_cue(None),
+                ).props('flat dense')
 
         def add_cue(line_num: int | None = None):
             show_id = selected_show_id['v']
@@ -354,16 +455,10 @@ def _build_page(db: ShowDatabase) -> None:
                 if initial_scripts:
                     selected_script_id['v'] = next(iter(initial_scripts))
 
-                ui.select(
-                    options=LAYERS,
-                    value=selected_layer['v'],
-                    label='Cue Layer',
-                    on_change=on_layer_change,
-                ).classes('w-36')
-
-                ui.button(
-                    'Add Cue (no position)', on_click=lambda: add_cue(None)
-                ).props('flat')
+        # Toolbar
+        toolbar_ref['el'] = ui.row().classes(
+            'w-full items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-700'
+        )
 
         with ui.splitter(value=75).classes('w-full h-full') as splitter:
             with splitter.before:
@@ -378,6 +473,7 @@ def _build_page(db: ShowDatabase) -> None:
                         unpositioned_ref['el'] = ui.column().classes('w-full gap-1')
 
         # Initial render
+        render_toolbar()
         refresh_all()
 
 
