@@ -1,20 +1,9 @@
 """Tests for the ShowRunner database backend."""
 
-import pytest
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from showrunner.database import ShowDatabase
 from showrunner.models import Actor, Config, Cue, CueList, CueLog, Script, Show
-
-
-@pytest.fixture()
-def db(tmp_path):
-    """Provide a fresh in-memory-like database for each test."""
-    db = ShowDatabase(tmp_path / 'test.db')
-    db.create_schema()
-    yield db
-    db.close()
-
 
 # ---------------------------------------------------------------------------
 # Schema / smoke tests
