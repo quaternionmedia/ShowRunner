@@ -9,12 +9,12 @@ integrates with the Showrunner framework to expose API routes for accessing
 and manipulating the database contents.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sqlmodel import select
 
 import showrunner
 from showrunner.database import ShowDatabase
-from showrunner.models import Actor, Config, Cue, CueList, CueLog, Script, Show
+from showrunner.models import Actor, Config, Cue, CueList, CueLog, Show
 
 router = APIRouter(prefix='/db', tags=['ShowDB'])
 
@@ -41,7 +41,7 @@ async def get_show(show_id: int):
     with _db.session() as s:
         show = s.get(Show, show_id)
         if not show:
-            return {'error': 'Show not found'}, 404
+            raise HTTPException(status_code=404, detail='Show not found')
         return show.model_dump()
 
 
