@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.python-version
+
+# Build / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Distribution / PyPI
+*.whl
+*.tar.gz
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+
+# Runtime artefacts
+*.db
+*.sqlite
+*.sqlite3
+show.db
+
+# Logs
+*.log
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# NiceGUI local storage
+.nicegui/
