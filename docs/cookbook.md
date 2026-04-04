@@ -9,7 +9,7 @@ Common patterns and recipes for working with ShowRunner.
 ### Create a show via CLI
 
 ```bash
-uv run sr create "Hamlet" --venue "Globe Theatre"
+sr create "Hamlet" --venue "Globe Theatre"
 ```
 
 ### Create a show programmatically
@@ -99,7 +99,7 @@ cue = Cue(
 
 ## API – Using the REST Endpoints
 
-Once the server is started (`uv run sr start`), all plugin routes are available.
+Once the server is started (`sr start`), all plugin routes are available.
 
 ### List shows via HTTP
 
@@ -127,11 +127,11 @@ curl http://localhost:8000/mixer/       # ShowMixer
 
 The NiceGUI-powered pages are browser-only (not REST):
 
-| URL | Plugin | Description |
-|---|---|---|
-| http://localhost:8000/ | ShowDashboard | Show selector and control dashboard |
-| http://localhost:8000/script | ShowScripter | Script viewer with drag-and-drop cue placement |
-| http://localhost:8000/admin | ShowAdmin | SQLAdmin CRUD interface *(requires admin group)* |
+| URL                          | Plugin        | Description                                      |
+| ---------------------------- | ------------- | ------------------------------------------------ |
+| http://localhost:8000/       | ShowDashboard | Show selector and control dashboard              |
+| http://localhost:8000/script | ShowScripter  | Script viewer with drag-and-drop cue placement   |
+| http://localhost:8000/admin  | ShowAdmin     | SQLAdmin CRUD interface _(requires admin group)_ |
 
 ---
 
@@ -141,10 +141,10 @@ The NiceGUI-powered pages are browser-only (not REST):
 
 ```bash
 # Inline content
-uv run sr scripts add 1 "Act 1" --format fountain --content "INT. STAGE - DAY"
+sr scripts add 1 "Act 1" --format fountain --content "INT. STAGE - DAY"
 
 # From a file on disk
-uv run sr scripts add 1 "Full Script" --format fountain --file ./script.fountain
+sr scripts add 1 "Full Script" --format fountain --file ./script.fountain
 ```
 
 ### Add a script programmatically
@@ -174,7 +174,7 @@ db.close()
 ### List scripts for a show
 
 ```bash
-uv run sr scripts list 1
+sr scripts list 1
 ```
 
 ---
@@ -185,7 +185,7 @@ The admin panel requires the optional `admin` dependency group:
 
 ```bash
 uv sync --group admin
-uv run sr start
+sr start
 # Then open http://localhost:8000/admin
 ```
 

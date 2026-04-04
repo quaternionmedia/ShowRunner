@@ -13,11 +13,22 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/quaternionmedia/ShowRunner.git
 cd ShowRunner
+
+# Install the dependencies and dev tools
 uv sync
-uv run sr start       # → http://localhost:8000
+
+# Activate the virtual environment (optional, or run commands with `uv run [cmd]` if not activated)
+source .venv/bin/activate
+
+# Start the API server
+sr start
 ```
 
-Optional admin panel:
+Visit [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
+
+### Optional:
+
+Install optional admin panel:
 
 ```bash
 uv sync --group admin

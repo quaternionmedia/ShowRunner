@@ -6,10 +6,10 @@ ShowRunner is a Python-based platform for managing live performances. It provide
 
 ## Requirements
 
-| Requirement | Minimum |
-|---|---|
-| Python | 3.12 |
-| [uv](https://docs.astral.sh/uv/) | latest |
+| Requirement                      | Minimum |
+| -------------------------------- | ------- |
+| Python                           | 3.12    |
+| [uv](https://docs.astral.sh/uv/) | latest  |
 
 Install `uv` if you don't have it:
 
@@ -49,7 +49,7 @@ The `sr` CLI is the main entry point.
 
 ```bash
 # Start the API server on http://localhost:8000
-uv run sr start
+sr start
 ```
 
 Or run the dev helper script directly:
@@ -60,13 +60,13 @@ uv run python scripts/dev
 
 Once running, open:
 
-| URL | Description |
-|---|---|
-| http://localhost:8000 | Dashboard (show selector) |
-| http://localhost:8000/script | Script viewer and cue editor |
-| http://localhost:8000/admin | Admin panel *(requires admin group)* |
-| http://localhost:8000/docs | FastAPI / OpenAPI interactive docs |
-| http://localhost:8000/openapi.json | Raw OpenAPI schema |
+| URL                                | Description                          |
+| ---------------------------------- | ------------------------------------ |
+| http://localhost:8000              | Dashboard (show selector)            |
+| http://localhost:8000/script       | Script viewer and cue editor         |
+| http://localhost:8000/admin        | Admin panel _(requires admin group)_ |
+| http://localhost:8000/docs         | FastAPI / OpenAPI interactive docs   |
+| http://localhost:8000/openapi.json | Raw OpenAPI schema                   |
 
 ---
 
@@ -75,7 +75,7 @@ Once running, open:
 Use the `create` command to register a new show in the local SQLite database:
 
 ```bash
-uv run sr create "ShakeSpear" --venue "The Globe Theatre"
+sr create "ShakeSpear" --venue "The Globe Theatre"
 # Created show "ShakeSpear" (id=1)
 ```
 
@@ -89,23 +89,23 @@ You can omit `--venue` if you don't have one yet.
 sr --help
 ```
 
-| Command | Description |
-|---|---|
-| `sr start` | Start the API server |
-| `sr create <name>` | Create a show (shorthand) |
-| `sr list` | List shows (shorthand) |
-| `sr plugins` | Show all loaded plugins |
-| `sr shows list` | List all shows |
-| `sr shows create <name>` | Create a show |
-| `sr shows info <id>` | Show details |
-| `sr shows delete <id>` | Delete a show |
-| `sr scripts list <show-id>` | List scripts for a show |
-| `sr scripts add <show-id> <title>` | Add a script |
-| `sr scripts delete <id>` | Delete a script |
-| `sr cue-lists list <show-id>` | List cue lists |
-| `sr cue-lists create <show-id> <name>` | Create a cue list |
-| `sr cues list <cue-list-id>` | List cues |
-| `sr cues add <cue-list-id> <num> <name>` | Add a cue |
+| Command                                  | Description               |
+| ---------------------------------------- | ------------------------- |
+| `sr start`                               | Start the API server      |
+| `sr create <name>`                       | Create a show (shorthand) |
+| `sr list`                                | List shows (shorthand)    |
+| `sr plugins`                             | Show all loaded plugins   |
+| `sr shows list`                          | List all shows            |
+| `sr shows create <name>`                 | Create a show             |
+| `sr shows info <id>`                     | Show details              |
+| `sr shows delete <id>`                   | Delete a show             |
+| `sr scripts list <show-id>`              | List scripts for a show   |
+| `sr scripts add <show-id> <title>`       | Add a script              |
+| `sr scripts delete <id>`                 | Delete a script           |
+| `sr cue-lists list <show-id>`            | List cue lists            |
+| `sr cue-lists create <show-id> <name>`   | Create a cue list         |
+| `sr cues list <cue-list-id>`             | List cues                 |
+| `sr cues add <cue-list-id> <num> <name>` | Add a cue                 |
 
 ## Running Tests
 

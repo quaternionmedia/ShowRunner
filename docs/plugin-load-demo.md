@@ -229,7 +229,7 @@ app.shutdown()
 Start the server and hit the endpoints to confirm all plugins are active:
 
 ```bash
-uv run sr start &
+sr start &
 sleep 2
 
 # REST endpoints
@@ -253,16 +253,16 @@ open http://localhost:8000/docs
 
 ## Hook Reference
 
-| Hook | Called by | Purpose |
-|---|---|---|
-| `showrunner_register()` | App inspection | Return plugin name/description/version |
-| `showrunner_startup(app)` | `ShowRunner.startup()` | Initialize plugin resources |
-| `showrunner_shutdown(app)` | `ShowRunner.shutdown()` | Release plugin resources |
-| `showrunner_get_routes()` | `ShowRunner._mount_routes()` | Return a `fastapi.APIRouter` |
-| `showrunner_get_commands()` | `ShowRunner.list_commands()` | Return CLI command descriptors |
-| `showrunner_command(command_name, **kwargs)` | Broadcast | Receive a command from the system |
-| `showrunner_query(query_name, **kwargs)` | Broadcast | Answer a query from the system |
-| `showrunner_event(event_name, **kwargs)` | Broadcast | Receive a system event |
+| Hook                                         | Called by                    | Purpose                                |
+| -------------------------------------------- | ---------------------------- | -------------------------------------- |
+| `showrunner_register()`                      | App inspection               | Return plugin name/description/version |
+| `showrunner_startup(app)`                    | `ShowRunner.startup()`       | Initialize plugin resources            |
+| `showrunner_shutdown(app)`                   | `ShowRunner.shutdown()`      | Release plugin resources               |
+| `showrunner_get_routes()`                    | `ShowRunner._mount_routes()` | Return a `fastapi.APIRouter`           |
+| `showrunner_get_commands()`                  | `ShowRunner.list_commands()` | Return CLI command descriptors         |
+| `showrunner_command(command_name, **kwargs)` | Broadcast                    | Receive a command from the system      |
+| `showrunner_query(query_name, **kwargs)`     | Broadcast                    | Answer a query from the system         |
+| `showrunner_event(event_name, **kwargs)`     | Broadcast                    | Receive a system event                 |
 
 All hooks are optional — a plugin only needs to implement the hooks relevant to its function.
 

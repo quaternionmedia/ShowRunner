@@ -20,10 +20,10 @@ Thank you for your interest in contributing! This guide covers environment setup
 
 ## Requirements
 
-| Tool | Version |
-|---|---|
-| Python | ≥ 3.12 |
-| [uv](https://docs.astral.sh/uv/) | latest |
+| Tool                             | Version |
+| -------------------------------- | ------- |
+| Python                           | ≥ 3.12  |
+| [uv](https://docs.astral.sh/uv/) | latest  |
 
 Install `uv` once (it manages Python and all virtual environments):
 
@@ -45,14 +45,18 @@ cd ShowRunner
 
 # Install all dependencies including dev tools (pytest, ruff, black, uvicorn)
 uv sync
+
+# Activate the virtual environment (optional, `uv run` commands work without this)
+source .venv/bin/activate
 ```
 
 > **Optional admin panel** (SQLAdmin web interface):
+>
 > ```bash
 > uv sync --group admin
 > ```
 
-`uv sync` creates `.venv/` in the project root and installs everything declared in `pyproject.toml`. You do not need to activate the virtual environment manually — all `uv run` commands use it automatically.
+`uv sync` creates `.venv/` in the project root and installs everything declared in `pyproject.toml`. If you do not want to activate the virtual environment, you can run commands with `uv run [cmd]`, which automatically uses the correct Python and dependencies:
 
 ---
 
@@ -60,7 +64,7 @@ uv sync
 
 ```bash
 # Start the API server (http://localhost:8000)
-uv run sr start
+sr start
 
 # Or use the dev helper script (same thing, no uv overhead)
 uv run python scripts/dev
@@ -68,12 +72,12 @@ uv run python scripts/dev
 
 Useful URLs once running:
 
-| URL | Description |
-|---|---|
-| http://localhost:8000 | Dashboard |
-| http://localhost:8000/script | Script viewer / cue editor |
-| http://localhost:8000/docs | Interactive OpenAPI docs |
-| http://localhost:8000/admin | Admin panel *(requires admin group)* |
+| URL                          | Description                          |
+| ---------------------------- | ------------------------------------ |
+| http://localhost:8000        | Dashboard                            |
+| http://localhost:8000/script | Script viewer / cue editor           |
+| http://localhost:8000/docs   | Interactive OpenAPI docs             |
+| http://localhost:8000/admin  | Admin panel _(requires admin group)_ |
 
 ---
 
@@ -87,12 +91,12 @@ All tests live under `tests/`. The test suite uses `tmp_path` fixtures and in-pr
 
 **Individual test files:**
 
-| File | What it covers |
-|---|---|
-| `tests/test_api.py` | HTTP routes via `TestClient` |
-| `tests/test_database.py` | `ShowDatabase` CRUD operations |
-| `tests/test_models.py` | Model `__str__` and field behaviour |
-| `tests/test_plugins.py` | Plugin registration and hook plumbing |
+| File                     | What it covers                        |
+| ------------------------ | ------------------------------------- |
+| `tests/test_api.py`      | HTTP routes via `TestClient`          |
+| `tests/test_database.py` | `ShowDatabase` CRUD operations        |
+| `tests/test_models.py`   | Model `__str__` and field behaviour   |
+| `tests/test_plugins.py`  | Plugin registration and hook plumbing |
 
 Run a specific file or test:
 
@@ -212,16 +216,16 @@ ShowRunner automatically discovers entry-point plugins via `pm.load_setuptools_e
 
 See [`src/showrunner/hookspecs.py`](src/showrunner/hookspecs.py) for full docstrings.
 
-| Hook | When to implement |
-|---|---|
-| `showrunner_register()` | Always — return `name`, `description`, `version` dict |
-| `showrunner_startup(app)` | Open DB connections, register pages, etc. |
-| `showrunner_shutdown(app)` | Release resources, close connections |
-| `showrunner_get_routes()` | Return a `fastapi.APIRouter` (or `None`) |
-| `showrunner_get_commands()` | Return a list of CLI command dicts |
-| `showrunner_command(name, **kwargs)` | Handle a broadcast command *(future)* |
-| `showrunner_query(name, **kwargs)` | Answer a broadcast query *(future)* |
-| `showrunner_event(name, **kwargs)` | React to a broadcast event *(future)* |
+| Hook                                 | When to implement                                     |
+| ------------------------------------ | ----------------------------------------------------- |
+| `showrunner_register()`              | Always — return `name`, `description`, `version` dict |
+| `showrunner_startup(app)`            | Open DB connections, register pages, etc.             |
+| `showrunner_shutdown(app)`           | Release resources, close connections                  |
+| `showrunner_get_routes()`            | Return a `fastapi.APIRouter` (or `None`)              |
+| `showrunner_get_commands()`          | Return a list of CLI command dicts                    |
+| `showrunner_command(name, **kwargs)` | Handle a broadcast command _(future)_                 |
+| `showrunner_query(name, **kwargs)`   | Answer a broadcast query _(future)_                   |
+| `showrunner_event(name, **kwargs)`   | React to a broadcast event _(future)_                 |
 
 ### Accessing the database from a plugin
 
