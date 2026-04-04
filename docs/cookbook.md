@@ -9,8 +9,11 @@ Common patterns and recipes for working with ShowRunner.
 ### Create a show via CLI
 
 ```bash
-sr create "Hamlet" --venue "Globe Theatre"
+sr create Hamlet --venue "Globe Theatre"
+sr create "The Pirates of Penzance" --venue "Theatre Royal"
 ```
+
+Make sure to use quotes around multi-word names and venues.
 
 ### Create a show programmatically
 
@@ -113,6 +116,56 @@ curl http://localhost:8000/db/shows
 curl -X POST "http://localhost:8000/db/shows?name=Hamlet&venue=Globe%20Theatre"
 ```
 
+---
+
+## Scripts
+
+### Add a script via CLI
+
+```bash
+# From a file on disk
+sr scripts add 1 Hamlet --format fountain --file ./examples/scripts/Hamles.fountain
+
+# From inline content
+sr scripts add 1 "Inline script" --format fountain --content "INT. STAGE - DAY"
+
+```
+
+### Add a script programmatically
+
+```python
+from showrunner.database import ShowDatabase
+from showrunner.models import Script
+
+db = ShowDatabase("show.db")
+db.create_schema()
+
+with open("./examples/scripts/Pirates-of-Penzance.fountain") as f:
+    script_content = f.read()
+
+with db.session() as s:
+    script = Script(
+        show_id=2,
+        title="Pirates of Penzance",
+        format="fountain",
+        content=script_content,
+    )
+    s.add(script)
+    s.commit()
+    s.refresh(script)
+    print(f"Script id={script.id}")
+
+db.close()
+```
+
+### List scripts for a show
+
+```bash
+sr scripts list 1
+```
+
+---
+
 ### Check a plugin's status
 
 Every built-in plugin exposes a health/index endpoint at its prefix:
@@ -132,50 +185,6 @@ The NiceGUI-powered pages are browser-only (not REST):
 | http://localhost:8000/       | ShowDashboard | Show selector and control dashboard              |
 | http://localhost:8000/script | ShowScripter  | Script viewer with drag-and-drop cue placement   |
 | http://localhost:8000/admin  | ShowAdmin     | SQLAdmin CRUD interface _(requires admin group)_ |
-
----
-
-## Scripts
-
-### Add a script via CLI
-
-```bash
-# Inline content
-sr scripts add 1 "Act 1" --format fountain --content "INT. STAGE - DAY"
-
-# From a file on disk
-sr scripts add 1 "Full Script" --format fountain --file ./script.fountain
-```
-
-### Add a script programmatically
-
-```python
-from showrunner.database import ShowDatabase
-from showrunner.models import Script
-
-db = ShowDatabase("show.db")
-db.create_schema()
-
-with db.session() as s:
-    script = Script(
-        show_id=1,
-        title="Act 1",
-        format="fountain",
-        content="INT. STAGE - DAY\n\nThe curtain rises.",
-    )
-    s.add(script)
-    s.commit()
-    s.refresh(script)
-    print(f"Script id={script.id}")
-
-db.close()
-```
-
-### List scripts for a show
-
-```bash
-sr scripts list 1
-```
 
 ---
 
