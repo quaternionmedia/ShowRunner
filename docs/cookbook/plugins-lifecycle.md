@@ -1,4 +1,4 @@
-# Plugin Load Demo
+# Plugin Lifecycle
 
 A complete walkthrough of the ShowRunner plugin lifecycle — from loading built-in plugins to registering an external one and verifying everything is wired up correctly.
 
