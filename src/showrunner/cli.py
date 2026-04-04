@@ -77,6 +77,16 @@ def _db() -> ShowDatabase:
     return db
 
 
+def _show_id(show_id: int | None) -> int:
+    """Resolve show_id from explicit value or config default."""
+    if show_id is None:
+        show_id = load_config().current_show
+    if show_id is None:
+        console.print("[red]No show specified and no current-show set in config.[/red]")
+        raise typer.Exit(1)
+    return show_id
+
+
 # ---------------------------------------------------------------------------
 # Top-level commands
 # ---------------------------------------------------------------------------
@@ -229,9 +239,12 @@ def shows_create(
 
 @shows_app.command("info")
 def shows_info(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """Show details for a single show including cue lists and actors."""
+    show_id = _show_id(show_id)
     db = _db()
     show = db.get_show(show_id)
     db.close()
@@ -249,10 +262,16 @@ def shows_info(
 
 @shows_app.command("delete")
 def shows_delete(
-    show_id: int = Argument(..., help="ID of the show to delete"),
+    show_id: Optional[int] = Option(
+        None,
+        "--show",
+        "-s",
+        help="ID of the show to delete (default: current-show from config)",
+    ),
     yes: bool = Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ):
     """Delete a show and all its associated data."""
+    show_id = _show_id(show_id)
     db = _db()
     show = db.get_show(show_id)
 
@@ -284,9 +303,12 @@ def shows_delete(
 
 @cue_lists_app.command("list")
 def cue_lists_list(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """List all cue lists for a show."""
+    show_id = _show_id(show_id)
     db = _db()
     with db.session() as session:
         cue_lists = list(
@@ -314,13 +336,16 @@ def cue_lists_list(
 
 @cue_lists_app.command("create")
 def cue_lists_create(
-    show_id: int = Argument(..., help="ID of the show"),
     name: str = Argument(..., help="Name for the cue list (e.g. 'Act 1')"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
     description: Optional[str] = Option(
         None, "--description", "-d", help="Optional description"
     ),
 ):
     """Create a new cue list for a show."""
+    show_id = _show_id(show_id)
     db = _db()
 
     show = db.get_show(show_id)
@@ -441,9 +466,12 @@ def cues_add(
 
 @scripts_app.command("list")
 def scripts_list(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """List all scripts for a show."""
+    show_id = _show_id(show_id)
     db = _db()
     with db.session() as session:
         script_rows = list(
@@ -476,8 +504,10 @@ def scripts_list(
 
 @scripts_app.command("add")
 def scripts_add(
-    show_id: int = Argument(..., help="ID of the show"),
     title: str = Argument(..., help="Script title"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
     fmt: str = Option("fountain", "--format", "-f", help="Format: fountain, pdf, text"),
     content: Optional[str] = Option(
         None, "--content", "-c", help="Inline script content"
@@ -487,6 +517,7 @@ def scripts_add(
     ),
 ):
     """Add a script to a show."""
+    show_id = _show_id(show_id)
     db = _db()
 
     show = db.get_show(show_id)

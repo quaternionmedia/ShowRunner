@@ -17,7 +17,7 @@ sr create Hamlet --venue "Globe Theatre"
 Import the script using the `scripts add` command:
 
 ```bash
-sr scripts add 1 "Hamlet Script" --format fountain --file ./examples/scripts/Hamlet.fountain
+sr scripts add "stage script" --format fountain --file ./examples/scripts/Hamlet.fountain
 ```
 
 ## Step 3 – Start the server
