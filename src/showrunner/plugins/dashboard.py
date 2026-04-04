@@ -9,16 +9,16 @@ from nicegui import ui
 from sqlmodel import select
 
 import showrunner
-from showrunner.database import ShowDatabase
+from showrunner.plugins.db import get_db
 from showrunner.models import Show
 
 
-def _build_page(db: ShowDatabase) -> None:
+def _build_page() -> None:
     """Build the root dashboard page."""
 
     @ui.page('/')
     def index():
-        with db.session() as s:
+        with get_db().session() as s:
             shows = s.exec(select(Show).order_by(Show.name)).all()
             options = {show.id: str(show) for show in shows}
 
@@ -59,7 +59,7 @@ class ShowDashboardPlugin:
         db = getattr(app, 'db', None)
         if db is None:
             return
-        _build_page(db)
+        _build_page()
         config = getattr(app, 'config', None)
         secret = config.server.storage_secret if config else 'showrunner'
         ui.run_with(app.api, storage_secret=secret)

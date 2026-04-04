@@ -6,8 +6,6 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pluggy
@@ -61,25 +59,8 @@ class ShowRunner:
         self._config_path = config_path or self.config._source_path
         self.pm = get_plugin_manager(self.config)
         self._config_watcher: ConfigWatcher | None = None
-        self.api = FastAPI(
-            title="ShowRunner",
-            version="0.1.0",
-            lifespan=self._lifespan,
-        )
+        self.api = FastAPI(title="ShowRunner", version="0.1.0")
         self._mount_routes()
-
-    @asynccontextmanager
-    async def _lifespan(self, app: FastAPI) -> AsyncIterator[None]:
-        """ASGI lifespan: start/stop the config file watcher inside the event loop."""
-        if self._config_path is not None:
-            self._config_watcher = ConfigWatcher(self._config_path, self)
-            self._config_watcher.start()
-        try:
-            yield
-        finally:
-            if self._config_watcher is not None:
-                self._config_watcher.stop()
-                self._config_watcher = None
 
     def _mount_routes(self) -> None:
         """Collect APIRouters from all plugins and include them in the FastAPI app."""
@@ -89,11 +70,20 @@ class ShowRunner:
                 self.api.include_router(router)
 
     def startup(self) -> None:
-        """Invoke the startup hook on all plugins."""
+        """Invoke the startup hook on all plugins and start the config watcher."""
         self.pm.hook.showrunner_startup(app=self)
 
+        if self._config_path is not None:
+            self._config_watcher = ConfigWatcher(self._config_path, self)
+            self._config_watcher.start()
+            logger.info("Watching %s for changes", self._config_path)
+            print(f"  Config:     {self._config_path} (watching for changes)")
+
     def shutdown(self) -> None:
-        """Invoke the shutdown hook on all plugins."""
+        """Invoke the shutdown hook on all plugins and stop the config watcher."""
+        if self._config_watcher is not None:
+            self._config_watcher.stop()
+            self._config_watcher = None
         self.pm.hook.showrunner_shutdown(app=self)
 
     def list_plugins(self) -> list[dict]:

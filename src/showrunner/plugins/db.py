@@ -22,6 +22,18 @@ router = APIRouter(prefix='/db', tags=['ShowDB'])
 _db: ShowDatabase | None = None
 
 
+def get_db() -> ShowDatabase:
+    """Return the current database instance.
+
+    Plugins and pages should call this instead of capturing the ``db``
+    reference at startup so they always use the latest connection after
+    a live config reload.
+    """
+    if _db is None:
+        raise RuntimeError('Database not initialised — is ShowDBPlugin loaded?')
+    return _db
+
+
 # ---------------------------------------------------------------------------
 # FastAPI routes
 # ---------------------------------------------------------------------------
@@ -122,6 +134,7 @@ class ShowDBPlugin:
     @showrunner.hookimpl(tryfirst=True)
     def showrunner_startup(self, app):
         global _db
+        self._app = app
         config = getattr(app, 'config', None)
         db_path = config.database.path if config else 'show.db'
         db_echo = config.database.echo if config else False
@@ -129,6 +142,21 @@ class ShowDBPlugin:
         _db.create_schema()
         # Store on the app so other plugins can access it
         app.db = _db
+
+    @showrunner.hookimpl
+    def showrunner_config_changed(self, config, previous_config):
+        """Reconnect to the database if the path or echo setting changed."""
+        global _db
+        old_db = previous_config.database
+        new_db = config.database
+        if old_db.path == new_db.path and old_db.echo == new_db.echo:
+            return
+        print(f"\033[33m⟳ Database switching from {old_db.path} → {new_db.path}\033[0m")
+        if _db is not None:
+            _db.close()
+        _db = ShowDatabase(db_path=new_db.path, echo=new_db.echo)
+        _db.create_schema()
+        self._app.db = _db
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):

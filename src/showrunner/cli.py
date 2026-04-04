@@ -71,7 +71,8 @@ cli.add_typer(scripts_app, name="scripts")
 
 
 def _db() -> ShowDatabase:
-    db = ShowDatabase()
+    cfg = load_config()
+    db = ShowDatabase(db_path=cfg.database.path, echo=cfg.database.echo)
     db.create_schema()
     return db
 

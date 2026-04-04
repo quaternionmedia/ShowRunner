@@ -2,7 +2,9 @@
 current-show = 1
 
 [database]
-# path = "show.db"
+# path = "show0.db"
+# path = "pirates.db"
+path = "12AM.db"
 # echo = false
 
 [server]

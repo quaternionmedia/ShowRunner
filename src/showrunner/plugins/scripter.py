@@ -10,7 +10,7 @@ from nicegui import ui
 from sqlmodel import select
 
 import showrunner
-from showrunner.database import ShowDatabase
+from showrunner.plugins.db import get_db
 from showrunner.models import Cue, CueList, Script, Show
 
 LAYERS = ['Lights', 'Sound', 'Video', 'Audio', 'Stage']
@@ -26,7 +26,7 @@ LAYER_COLORS = {
 PAGE_SIZE = 100
 
 
-def _build_page(db: ShowDatabase) -> None:
+def _build_page() -> None:
     """Register the /script NiceGUI page."""
 
     @ui.page('/script')
@@ -34,7 +34,7 @@ def _build_page(db: ShowDatabase) -> None:
         ui.dark_mode(True)
 
         # ---- state ----------------------------------------------------------
-        with db.session() as s:
+        with get_db().session() as s:
             shows = s.exec(select(Show).order_by(Show.name)).all()
             show_options = {sh.id: str(sh) for sh in shows}
 
@@ -62,7 +62,7 @@ def _build_page(db: ShowDatabase) -> None:
             show_id = selected_show_id['v']
             if show_id is None:
                 return {}
-            with db.session() as s:
+            with get_db().session() as s:
                 scripts = s.exec(
                     select(Script)
                     .where(Script.show_id == show_id)
@@ -73,7 +73,7 @@ def _build_page(db: ShowDatabase) -> None:
         def _load_cues(cue_list_id: int | None) -> list[dict]:
             if cue_list_id is None:
                 return []
-            with db.session() as s:
+            with get_db().session() as s:
                 cues = s.exec(
                     select(Cue)
                     .where(Cue.cue_list_id == cue_list_id)
@@ -94,7 +94,7 @@ def _build_page(db: ShowDatabase) -> None:
 
         def _get_or_create_cuelist(show_id: int) -> int:
             """Return the id of the first cue list for the show, creating one if needed."""
-            with db.session() as s:
+            with get_db().session() as s:
                 cl = s.exec(select(CueList).where(CueList.show_id == show_id)).first()
                 if cl:
                     return cl.id
@@ -105,7 +105,7 @@ def _build_page(db: ShowDatabase) -> None:
                 return cl.id
 
         def _next_cue_number(cue_list_id: int) -> int:
-            with db.session() as s:
+            with get_db().session() as s:
                 cues = s.exec(select(Cue).where(Cue.cue_list_id == cue_list_id)).all()
                 if not cues:
                     return 1
@@ -113,7 +113,7 @@ def _build_page(db: ShowDatabase) -> None:
 
         def _update_cue(cue_id: int, **fields) -> None:
             """Update one or more fields on a cue."""
-            with db.session() as s:
+            with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
                 if cue is None:
                     return
@@ -124,7 +124,7 @@ def _build_page(db: ShowDatabase) -> None:
 
         def _delete_cue(cue_id: int) -> None:
             """Delete a cue by id."""
-            with db.session() as s:
+            with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
                 if cue is not None:
                     s.delete(cue)
@@ -263,7 +263,7 @@ def _build_page(db: ShowDatabase) -> None:
                 render_pagination()
                 return
 
-            with db.session() as s:
+            with get_db().session() as s:
                 script = s.get(Script, sid)
                 content = script.content if script else None
 
@@ -646,7 +646,7 @@ def _build_page(db: ShowDatabase) -> None:
             num = _next_cue_number(cl_id)
             layer = selected_layer['v']
 
-            with db.session() as s:
+            with get_db().session() as s:
                 cue = Cue(
                     cue_list_id=cl_id,
                     number=num,
@@ -758,7 +758,7 @@ class ShowScripterPlugin:
         db = getattr(app, 'db', None)
         if db is None:
             return
-        _build_page(db)
+        _build_page()
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):

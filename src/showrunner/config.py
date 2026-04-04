@@ -6,8 +6,8 @@ file discovery, Pydantic validation, and optional live-reload via file watching.
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import threading
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -177,52 +177,70 @@ def load_config(path: Path | None = None) -> ShowRunnerConfig:
 class ConfigWatcher:
     """Watch the config file for changes and notify via a pluggy hook.
 
-    Uses ``watchfiles`` (async) to monitor the TOML file.  On a valid
-    change the ``showrunner_config_changed`` hook is invoked with the new
-    and previous config.  Invalid TOML is logged and silently ignored so
+    Uses ``watchfiles`` in a daemon thread to monitor the TOML file.  On a
+    valid change the ``showrunner_config_changed`` hook is invoked with the
+    new and previous config.  Invalid TOML is logged and silently ignored so
     the running config is never corrupted.
     """
 
     def __init__(self, path: Path, app: Any) -> None:
         self._path = path
         self._app = app
-        self._task: asyncio.Task | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        """Spawn the background watcher task (must be called inside a running event loop)."""
-        loop = asyncio.get_running_loop()
-        self._task = loop.create_task(self._watch())
+        """Spawn the background watcher thread."""
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
 
-    async def _watch(self) -> None:
-        from watchfiles import awatch
+    def _watch(self) -> None:
+        from watchfiles import Change, watch
 
-        try:
-            async for _changes in awatch(self._path):
-                try:
-                    new_config = load_config(self._path)
-                except Exception:
-                    logger.warning(
-                        "Config file changed but failed to parse — keeping previous config",
-                        exc_info=True,
-                    )
-                    continue
+        # Watch the parent directory — editors like VS Code do atomic saves
+        # (write tmp + rename) which change the file inode, causing a
+        # direct file watch to lose track.
+        target_name = self._path.name
+        parent = self._path.parent
 
-                previous = self._app.config
-                self._app.config = new_config
-                logger.info("Config reloaded from %s", self._path)
+        for changes in watch(parent, stop_event=self._stop_event):
+            if not any(Path(p).name == target_name for _change, p in changes):
+                continue
+            try:
+                new_config = load_config(self._path)
+            except Exception:
+                logger.warning(
+                    "Config file changed but failed to parse — keeping previous config",
+                    exc_info=True,
+                )
+                continue
 
-                try:
-                    self._app.pm.hook.showrunner_config_changed(
-                        config=new_config,
-                        previous_config=previous,
-                    )
-                except Exception:
-                    logger.warning("Error in config_changed hook", exc_info=True)
-        except asyncio.CancelledError:
-            return
+            previous = self._app.config
+            self._app.config = new_config
+            logger.info("Config reloaded from %s", self._path)
+            print(f"\033[33m⟳ Config reloaded from {self._path}\033[0m")
+
+            try:
+                self._app.pm.hook.showrunner_config_changed(
+                    config=new_config,
+                    previous_config=previous,
+                )
+            except Exception:
+                logger.warning("Error in config_changed hook", exc_info=True)
+
+            # Reload all connected NiceGUI browser tabs
+            try:
+                from nicegui import Client
+
+                for client in Client.instances.values():
+                    if client.has_socket_connection:
+                        client.run_javascript("location.reload()")
+            except Exception:
+                pass
 
     def stop(self) -> None:
-        """Cancel the watcher task."""
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+        """Signal the watcher thread to stop and wait for it."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+            self._thread = None
