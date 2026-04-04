@@ -6,8 +6,8 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 import pluggy
 from fastapi import FastAPI
 
-from .hookspecs import ShowRunnerSpec
 from . import plugins
+from .hookspecs import ShowRunnerSpec
 
 
 def get_plugin_manager() -> pluggy.PluginManager:

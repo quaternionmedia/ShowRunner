@@ -19,7 +19,6 @@ except ImportError:  # pragma: no cover
 import showrunner
 from showrunner.models import Actor, Config, Cue, CueList, CueLog, Script, Show
 
-
 # ---------------------------------------------------------------------------
 # ModelAdmin views (only defined when sqladmin is available)
 # ---------------------------------------------------------------------------
