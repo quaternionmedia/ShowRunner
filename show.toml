@@ -1,0 +1,28 @@
+[showrunner]
+current-show = 1
+
+[database]
+# path = "show.db"
+# echo = false
+
+[server]
+# host = "0.0.0.0"
+# port = 8000
+# storage-secret = "showrunner"
+
+[logging]
+# level = "INFO"
+
+[paths]
+# scripts = "./scripts"
+# exports = "./exports"
+
+[plugins]
+# disabled = []
+
+# Per-plugin settings use [plugins.<name>] sections:
+# [plugins.lighter]
+# console-ip = "192.168.1.100"
+#
+# [plugins.mixer]
+# osc-port = 53000

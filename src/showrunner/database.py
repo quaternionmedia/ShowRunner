@@ -25,11 +25,11 @@ class ShowDatabase:
         db.close()
     """
 
-    def __init__(self, db_path: str | Path = 'show.db') -> None:
+    def __init__(self, db_path: str | Path = 'show.db', echo: bool = False) -> None:
         self.db_path = Path(db_path)
         self.engine = create_engine(
             f'sqlite:///{self.db_path}',
-            echo=False,
+            echo=echo,
         )
 
     def create_schema(self) -> None:

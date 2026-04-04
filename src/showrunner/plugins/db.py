@@ -122,7 +122,10 @@ class ShowDBPlugin:
     @showrunner.hookimpl(tryfirst=True)
     def showrunner_startup(self, app):
         global _db
-        _db = ShowDatabase()
+        config = getattr(app, 'config', None)
+        db_path = config.database.path if config else 'show.db'
+        db_echo = config.database.echo if config else False
+        _db = ShowDatabase(db_path=db_path, echo=db_echo)
         _db.create_schema()
         # Store on the app so other plugins can access it
         app.db = _db

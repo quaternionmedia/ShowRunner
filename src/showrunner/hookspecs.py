@@ -95,3 +95,14 @@ class ShowRunnerSpec:
         :param event_name: Name of the event to publish (e.g. "cue_started")
         :param kwargs: Additional event data
         """
+
+    @hookspec
+    def showrunner_config_changed(self, config, previous_config):
+        """Called when the configuration file is modified and successfully reloaded.
+
+        Plugins can implement this hook to react to runtime config changes
+        without a server restart.
+
+        :param config: The new ``ShowRunnerConfig`` instance.
+        :param previous_config: The previous ``ShowRunnerConfig`` instance.
+        """

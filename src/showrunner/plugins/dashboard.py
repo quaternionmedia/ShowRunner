@@ -60,7 +60,9 @@ class ShowDashboardPlugin:
         if db is None:
             return
         _build_page(db)
-        ui.run_with(app.api, storage_secret='showrunner')
+        config = getattr(app, 'config', None)
+        secret = config.server.storage_secret if config else 'showrunner'
+        ui.run_with(app.api, storage_secret=secret)
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):
