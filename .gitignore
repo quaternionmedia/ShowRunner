@@ -41,7 +41,7 @@ coverage.xml
 .ruff_cache/
 .dmypy.json
 
-# Runtime artefacts
+# Databases
 *.db
 *.sqlite
 *.sqlite3
