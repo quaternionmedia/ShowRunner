@@ -12,6 +12,7 @@ from sqlmodel import select
 import showrunner
 from showrunner.plugins.db import get_db
 from showrunner.models import Cue, CueList, Script, Show
+from showrunner.ui import header
 
 LAYERS = ['Lights', 'Sound', 'Video', 'Audio', 'Stage']
 
@@ -32,6 +33,7 @@ def _build_page() -> None:
     @ui.page('/script')
     def script_page():
         ui.dark_mode(True)
+        header()
 
         # ---- state ----------------------------------------------------------
         with get_db().session() as s:
@@ -771,3 +773,16 @@ class ShowScripterPlugin:
     @showrunner.hookimpl
     def showrunner_get_commands(self):
         return []
+
+    @showrunner.hookimpl
+    def showrunner_get_nav(self):
+        return {
+            'label': 'Scripts',
+            'path': '/script',
+            'icon': 'description',
+            'order': 10,
+        }
+
+    @showrunner.hookimpl
+    def showrunner_get_status(self):
+        return None

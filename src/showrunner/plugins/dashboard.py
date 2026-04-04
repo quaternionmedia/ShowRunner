@@ -11,6 +11,7 @@ from sqlmodel import select
 import showrunner
 from showrunner.plugins.db import get_db
 from showrunner.models import Show
+from showrunner.ui import header
 
 
 def _build_page() -> None:
@@ -18,15 +19,15 @@ def _build_page() -> None:
 
     @ui.page('/')
     def index():
+        ui.dark_mode(True)
+        header()
+
         with get_db().session() as s:
             shows = s.exec(select(Show).order_by(Show.name)).all()
             options = {show.id: str(show) for show in shows}
 
-        ui.dark_mode(True)
-
-        with ui.column().classes('w-full items-center mt-16'):
-            ui.label('ShowRunner').classes('text-h3 font-bold')
-            ui.label('Show Control Dashboard').classes('text-subtitle1 text-grey')
+        with ui.column().classes('w-full items-center mt-8'):
+            ui.label('Show Control Dashboard').classes('text-h4 font-bold')
 
             with ui.card().classes('mt-8 w-96'):
                 ui.label('Current Show').classes('text-h6')
@@ -59,6 +60,11 @@ class ShowDashboardPlugin:
         db = getattr(app, 'db', None)
         if db is None:
             return
+
+        from showrunner.ui import set_plugin_manager
+
+        set_plugin_manager(app.pm)
+
         _build_page()
         config = getattr(app, 'config', None)
         secret = config.server.storage_secret if config else 'showrunner'
@@ -75,3 +81,11 @@ class ShowDashboardPlugin:
     @showrunner.hookimpl
     def showrunner_get_commands(self):
         return []
+
+    @showrunner.hookimpl
+    def showrunner_get_nav(self):
+        return {'label': 'Dashboard', 'path': '/', 'icon': 'dashboard', 'order': 0}
+
+    @showrunner.hookimpl
+    def showrunner_get_status(self):
+        return None

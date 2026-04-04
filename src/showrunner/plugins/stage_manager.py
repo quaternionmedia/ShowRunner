@@ -41,3 +41,11 @@ class ShowManagerPlugin:
     @showrunner.hookimpl
     def showrunner_get_commands(self):
         return []
+
+    @showrunner.hookimpl
+    def showrunner_get_nav(self):
+        return None
+
+    @showrunner.hookimpl
+    def showrunner_get_status(self):
+        return None
