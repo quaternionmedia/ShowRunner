@@ -1,4 +1,4 @@
-# ShowRunner Plugin Architecture
+# Plugin Architecture
 
 ## Overview
 
@@ -84,17 +84,17 @@ graph TB
 
 All hooks are defined in `src/showrunner/hookspecs.py` and prefixed with `showrunner_`.
 
-| Hook | Purpose | Returns | Status |
-|---|---|---|---|
-| `showrunner_register()` | Report plugin metadata | `dict(name, description, version)` | ✅ All plugins |
-| `showrunner_startup(app)` | Initialize resources at app startup | — | ✅ All plugins |
-| `showrunner_shutdown(app)` | Release resources at app shutdown | — | ✅ All plugins |
-| `showrunner_get_routes()` | Provide HTTP endpoints | `fastapi.APIRouter` or `None` | ✅ All plugins |
-| `showrunner_get_commands()` | Provide CLI/TUI commands | `list[dict]` | ✅ All plugins |
-| `showrunner_command(name, **kwargs)` | Receive a broadcast command | — | 🔲 Defined, not yet implemented |
-| `showrunner_query(name, **kwargs)` | Answer a broadcast query | any | 🔲 Defined, not yet implemented |
-| `showrunner_event(name, **kwargs)` | Receive a broadcast event | — | 🔲 Defined, not yet implemented |
-| `showrunner_subscribe(name)` | Subscribe to a named event stream | — | 🔲 Defined, not yet implemented |
+| Hook                                 | Purpose                             | Returns                            | Status                          |
+| ------------------------------------ | ----------------------------------- | ---------------------------------- | ------------------------------- |
+| `showrunner_register()`              | Report plugin metadata              | `dict(name, description, version)` | ✅ All plugins                  |
+| `showrunner_startup(app)`            | Initialize resources at app startup | —                                  | ✅ All plugins                  |
+| `showrunner_shutdown(app)`           | Release resources at app shutdown   | —                                  | ✅ All plugins                  |
+| `showrunner_get_routes()`            | Provide HTTP endpoints              | `fastapi.APIRouter` or `None`      | ✅ All plugins                  |
+| `showrunner_get_commands()`          | Provide CLI/TUI commands            | `list[dict]`                       | ✅ All plugins                  |
+| `showrunner_command(name, **kwargs)` | Receive a broadcast command         | —                                  | 🔲 Defined, not yet implemented |
+| `showrunner_query(name, **kwargs)`   | Answer a broadcast query            | any                                | 🔲 Defined, not yet implemented |
+| `showrunner_event(name, **kwargs)`   | Receive a broadcast event           | —                                  | 🔲 Defined, not yet implemented |
+| `showrunner_subscribe(name)`         | Subscribe to a named event stream   | —                                  | 🔲 Defined, not yet implemented |
 
 > **Future hooks** (`showrunner_command`, `showrunner_query`, `showrunner_event`, `showrunner_subscribe`) are registered in the hook spec but no built-in plugin implements them yet. They are reserved for the inter-plugin messaging system.
 
@@ -102,11 +102,11 @@ All hooks are defined in `src/showrunner/hookspecs.py` and prefixed with `showru
 
 pluggy supports `tryfirst=True` and `trylast=True` on individual hook implementations to control call order. ShowRunner uses this for two plugins:
 
-| Plugin | Hook | Order | Reason |
-|---|---|---|---|
-| `ShowDB` | `showrunner_startup` | `tryfirst` | Must open the database before any other plugin needs it |
-| `ShowAdmin` | `showrunner_startup` | `trylast` | Must mount admin views after the DB engine is available |
-| `ShowDashboard` | `showrunner_startup` | `trylast` | Must build NiceGUI pages after the DB is ready |
+| Plugin          | Hook                 | Order      | Reason                                                  |
+| --------------- | -------------------- | ---------- | ------------------------------------------------------- |
+| `ShowDB`        | `showrunner_startup` | `tryfirst` | Must open the database before any other plugin needs it |
+| `ShowAdmin`     | `showrunner_startup` | `trylast`  | Must mount admin views after the DB engine is available |
+| `ShowDashboard` | `showrunner_startup` | `trylast`  | Must build NiceGUI pages after the DB is ready          |
 
 ## Shared Application State (`app.db`)
 
@@ -133,11 +133,11 @@ def showrunner_startup(self, app):
 
 ## Optional Dependency Groups
 
-| Group | Package | Enables |
-|---|---|---|
-| *(core)* | `nicegui` | `ShowDashboard`, `ShowScripter` UI pages |
-| `admin` | `sqladmin`, `wtforms` | `ShowAdmin` panel at `/admin` |
-| `dev` | `uvicorn`, `pytest`, `ruff`, `black` | Dev server and tooling |
+| Group    | Package                              | Enables                                  |
+| -------- | ------------------------------------ | ---------------------------------------- |
+| _(core)_ | `nicegui`                            | `ShowDashboard`, `ShowScripter` UI pages |
+| `admin`  | `sqladmin`, `wtforms`                | `ShowAdmin` panel at `/admin`            |
+| `dev`    | `uvicorn`, `pytest`, `ruff`, `black` | Dev server and tooling                   |
 
 Install with `uv sync --group <name>` or `uv sync --all-groups`.
 

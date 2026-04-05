@@ -18,6 +18,7 @@ ENV/
 # Build / packaging
 dist/
 build/
+site/
 *.egg-info/
 *.egg
 MANIFEST
