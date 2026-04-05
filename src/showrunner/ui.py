@@ -36,6 +36,37 @@ def _current_show_name() -> str:
     return "No show selected"
 
 
+def _get_show_options() -> dict[int, str]:
+    """Return {id: name} for all shows, ordered by name."""
+    try:
+        with get_db().session() as s:
+            shows = s.exec(select(Show).order_by(Show.name)).all()
+            return {show.id: str(show) for show in shows}
+    except Exception:
+        return {}
+
+
+def _current_show_id() -> int | None:
+    """Return the stored current show id, or the first available show."""
+    stored = nicegui_app.storage.general.get("current_show")
+    if stored is not None:
+        return int(stored)
+    options = _get_show_options()
+    if options:
+        first = next(iter(options))
+        nicegui_app.storage.general["current_show"] = first
+        return first
+    return None
+
+
+def _current_script_id() -> int | None:
+    """Return the stored current script id, or None."""
+    stored = nicegui_app.storage.general.get("current_script")
+    if stored is not None:
+        return int(stored)
+    return None
+
+
 def _get_nav_items(pm) -> list[dict]:
     """Collect navigation items from all plugins via the hook."""
     results = pm.hook.showrunner_get_nav()
@@ -114,16 +145,28 @@ def header(pm=None) -> None:
                 "text-white text-weight-bold text-body1 no-underline"
             )
 
-        # -- CENTER: current show + plugin status icons ---------------------
+        # -- CENTER: show selector + plugin status icons --------------------
         with ui.row().classes("items-center gap-3 no-wrap"):
             ui.icon("theaters").classes("text-amber text-lg")
-            ui.label(_current_show_name()).classes(
-                "text-white text-body2"
-            ).bind_text_from(
-                nicegui_app.storage.general,
-                "current_show",
-                backward=lambda _: _current_show_name(),
-            )
+            show_options = _get_show_options()
+            current = _current_show_id()
+
+            def _on_show_change(e):
+                nicegui_app.storage.general["current_show"] = e.value
+                ui.navigate.reload()
+
+            if show_options:
+                ui.select(
+                    options=show_options,
+                    value=current,
+                    on_change=_on_show_change,
+                ).props('dense dark borderless').classes(
+                    "text-white min-w-[12rem]"
+                ).style(
+                    "color: white;"
+                )
+            else:
+                ui.label("No shows").classes("text-white text-body2 text-grey")
 
             # Plugin status icons
             for si in status_icons:

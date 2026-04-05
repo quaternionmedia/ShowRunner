@@ -6,13 +6,13 @@ onto specific lines within the script text.
 
 from html import escape as _escape
 
-from nicegui import ui
+from nicegui import app as nicegui_app, ui
 from sqlmodel import select
 
 import showrunner
 from showrunner.plugins.db import get_db
 from showrunner.models import Cue, CueList, Script, Show
-from showrunner.ui import header
+from showrunner.ui import _current_script_id, _current_show_id, header
 
 LAYERS = ['Lights', 'Sound', 'Video', 'Audio', 'Stage']
 
@@ -36,11 +36,7 @@ def _build_page() -> None:
         header()
 
         # ---- state ----------------------------------------------------------
-        with get_db().session() as s:
-            shows = s.exec(select(Show).order_by(Show.name)).all()
-            show_options = {sh.id: str(sh) for sh in shows}
-
-        selected_show_id: dict = {'v': next(iter(show_options), None)}
+        selected_show_id: dict = {'v': _current_show_id()}
         selected_script_id: dict = {'v': None}
         selected_layer: dict = {'v': LAYERS[0]}
 
@@ -575,6 +571,8 @@ def _build_page() -> None:
         # ---- actions --------------------------------------------------------
         def on_show_change(e):
             selected_show_id['v'] = e.value
+            nicegui_app.storage.general['current_show'] = e.value
+            nicegui_app.storage.general['current_script'] = None
             selected_script_id['v'] = None
             current_page['v'] = 0
             # Rebuild script selector
@@ -587,10 +585,12 @@ def _build_page() -> None:
             on_script_change_value(next(iter(opts), None))
 
         def on_script_change(e):
-            on_script_change_value(e.value)
+            nicegui_app.storage.general['current_script'] = e.value
+            ui.navigate.reload()
 
         def on_script_change_value(val):
             selected_script_id['v'] = val
+            nicegui_app.storage.general['current_script'] = val
             current_page['v'] = 0
             refresh_all()
 
@@ -698,26 +698,28 @@ def _build_page() -> None:
             refresh_all()
 
         # ---- layout ---------------------------------------------------------
-        with ui.header().classes('items-center justify-between'):
+        with ui.row().classes(
+            'w-full items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700'
+        ):
             ui.label('ShowScripter').classes('text-h5 font-bold')
             with ui.row().classes('items-center gap-4'):
-                ui.select(
-                    options=show_options,
-                    value=selected_show_id['v'],
-                    label='Show',
-                    on_change=on_show_change,
-                ).classes('w-48')
-
                 initial_scripts = _load_scripts()
+                stored_script = _current_script_id()
+                # Use stored script if it belongs to this show's scripts
+                if stored_script in initial_scripts:
+                    initial_value = stored_script
+                else:
+                    initial_value = next(iter(initial_scripts), None)
                 sel = ui.select(
                     options=initial_scripts,
-                    value=next(iter(initial_scripts), None),
+                    value=initial_value,
                     label='Script',
                     on_change=on_script_change,
                 ).classes('w-48')
                 script_select_ref['el'] = sel
-                if initial_scripts:
-                    selected_script_id['v'] = next(iter(initial_scripts))
+                if initial_value is not None:
+                    selected_script_id['v'] = initial_value
+                    nicegui_app.storage.general['current_script'] = initial_value
 
         # Toolbar
         toolbar_ref['el'] = ui.row().classes(

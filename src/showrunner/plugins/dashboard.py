@@ -6,7 +6,6 @@ show control interface.
 """
 
 from nicegui import ui
-from sqlmodel import select
 
 import showrunner
 from showrunner.plugins.db import get_db
@@ -22,26 +21,8 @@ def _build_page() -> None:
         ui.dark_mode(True)
         header()
 
-        with get_db().session() as s:
-            shows = s.exec(select(Show).order_by(Show.name)).all()
-            options = {show.id: str(show) for show in shows}
-
         with ui.column().classes('w-full items-center mt-8'):
             ui.label('Show Control Dashboard').classes('text-h4 font-bold')
-
-            with ui.card().classes('mt-8 w-96'):
-                ui.label('Current Show').classes('text-h6')
-                if options:
-                    ui.select(
-                        options=options,
-                        value=next(iter(options)),
-                        label='Select a show',
-                    ).classes('w-full')
-                else:
-                    ui.label('No shows found. Create one with:').classes(
-                        'text-grey mt-2'
-                    )
-                    ui.code('sr create My Show Name').classes('mt-1')
 
 
 class ShowDashboardPlugin:
