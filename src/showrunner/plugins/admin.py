@@ -172,7 +172,17 @@ class ShowAdminPlugin:
         if db is None:
             return
 
-        admin = Admin(app.api, db.engine, title='ShowRunner Admin')
+        from pathlib import Path
+
+        templates_dir = str(Path(__file__).resolve().parent.parent / 'templates')
+
+        admin = Admin(
+            app.api,
+            db.engine,
+            title='Admin',
+            logo_url='data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22white%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15.295%2019.562%2016%2022%22%2F%3E%3Cpath%20d%3D%22m17%2016%203.758%202.098%22%2F%3E%3Cpath%20d%3D%22m19%2012.5%203.026-.598%22%2F%3E%3Cpath%20d%3D%22M7.61%206.3a3%203%200%200%200-3.92%201.3l-1.38%202.79a3%203%200%200%200%201.3%203.91l6.89%203.597a1%201%200%200%200%201.342-.447l3.106-6.211a1%201%200%200%200-.447-1.341z%22%2F%3E%3Cpath%20d%3D%22M8%209V2%22%2F%3E%3C%2Fsvg%3E',
+            templates_dir=templates_dir,
+        )
         for view in _MODEL_VIEWS:
             admin.add_view(view)
         self._admin = admin

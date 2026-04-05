@@ -95,3 +95,20 @@ class ShowRunner:
         results = self.pm.hook.showrunner_get_commands()
         # Flatten the list-of-lists into a single list
         return [cmd for group in results if group for cmd in group]
+
+
+def _create_app() -> FastAPI:
+    """Create and start a ShowRunner instance, returning its FastAPI app.
+
+    Used as the ASGI entry point for ``uvicorn showrunner.app:app --reload``.
+    """
+    show = ShowRunner()
+    show.startup()
+    return show.api
+
+
+def __getattr__(name: str):
+    if name == "app":
+        globals()["app"] = _create_app()
+        return globals()["app"]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

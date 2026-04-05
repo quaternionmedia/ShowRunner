@@ -8,6 +8,8 @@ copyright = """
 Copyright &copy; 2026 Quaternion Media.
 """
 
+dev_addr = "localhost:9000"
+
 nav = [
     { "Home" = [
         "index.md",
