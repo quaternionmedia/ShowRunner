@@ -4,6 +4,7 @@ Provides a NiceGUI page at ``/script`` for viewing scripts and placing cues
 onto specific lines within the script text.
 """
 
+import re
 from html import escape as _escape
 
 from nicegui import app as nicegui_app, ui
@@ -25,6 +26,68 @@ LAYER_COLORS = {
 }
 
 PAGE_SIZE = 100
+PAGE_BREAK_RE = re.compile(r'\[\[Page\s+(.+?)\]\]')
+
+
+def _parse_pages(lines: list[str]) -> list[dict]:
+    """Split *lines* into pages delimited by ``[[Page N]]`` markers.
+
+    Returns a list of dicts: ``{'label': str | None, 'lines': [(index, text), ...]}``.
+    Line indices are 0-based positions in the original *lines* list so that
+    line numbering stays consistent regardless of pagination.
+
+    Markers may appear inline (e.g. ``some text [[Page 5]] more text``).
+    Text before the marker stays on the previous page; text after starts the
+    new page.  The marker itself is stripped from the displayed content.
+
+    Falls back to fixed ``PAGE_SIZE`` chunks when no markers are found.
+    """
+    pages: list[dict] = []
+    current_label: str | None = None
+    current_lines: list[tuple[int, str]] = []
+    found_any_marker = False
+
+    for i, line in enumerate(lines):
+        m = PAGE_BREAK_RE.search(line)
+        if m:
+            found_any_marker = True
+            before = line[: m.start()].rstrip()
+            after = line[m.end() :].lstrip()
+
+            # Text before the marker belongs to the current (previous) page
+            if before:
+                current_lines.append((i, before))
+
+            # Flush accumulated lines as previous page
+            if current_lines or current_label is not None:
+                pages.append({'label': current_label, 'lines': current_lines})
+
+            current_label = m.group(1)
+            current_lines = []
+
+            # Text after the marker starts the new page
+            if after:
+                current_lines.append((i, after))
+        else:
+            current_lines.append((i, line))
+
+    # Flush last page
+    if current_lines or current_label is not None:
+        pages.append({'label': current_label, 'lines': current_lines})
+
+    # Fallback: no markers found → chunk by PAGE_SIZE
+    if not found_any_marker:
+        pages = []
+        for start in range(0, len(lines), PAGE_SIZE):
+            chunk = [
+                (i, lines[i]) for i in range(start, min(start + PAGE_SIZE, len(lines)))
+            ]
+            pages.append({'label': None, 'lines': chunk})
+
+    if not pages:
+        pages = [{'label': None, 'lines': []}]
+
+    return pages
 
 
 def _build_page() -> None:
@@ -43,6 +106,7 @@ def _build_page() -> None:
         # pagination
         current_page: dict = {'v': 0}
         total_pages: dict = {'v': 1}
+        parsed_pages: dict = {'v': []}
 
         # toggle for cue detail annotations
         show_details: dict = {'v': False}
@@ -50,6 +114,7 @@ def _build_page() -> None:
         # refs to dynamic containers
         script_select_ref: dict = {'el': None}
         script_content_ref: dict = {'el': None}
+        pagination_top_ref: dict = {'el': None}
         pagination_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
         toolbar_ref: dict = {'el': None}
@@ -285,12 +350,13 @@ def _build_page() -> None:
                 line_cues.sort(key=lambda c: c['script_char'] or 0)
 
             lines = content.split('\n')
-            total_pages['v'] = max(1, (len(lines) + PAGE_SIZE - 1) // PAGE_SIZE)
+            pages = _parse_pages(lines)
+            parsed_pages['v'] = pages
+            total_pages['v'] = max(1, len(pages))
             current_page['v'] = min(current_page['v'], total_pages['v'] - 1)
 
             page = current_page['v']
-            start = page * PAGE_SIZE
-            end = min(start + PAGE_SIZE, len(lines))
+            page_lines = pages[page]['lines']
 
             detail_active = show_details['v']
 
@@ -302,9 +368,8 @@ def _build_page() -> None:
                     else 'display: grid; grid-template-columns: 1fr; width: 100%;'
                 )
                 with ui.element('div').style(grid_style):
-                    for i in range(start, end):
-                        line = lines[i]
-                        line_num = i + 1
+                    for line_idx, line in page_lines:
+                        line_num = line_idx + 1
                         line_cues = cues_by_line.get(line_num, [])
 
                         # -- Column 1: script line (drop target) --
@@ -445,18 +510,21 @@ def _build_page() -> None:
                 else:
                     ui.html('&nbsp;')
 
-        def render_pagination():
-            """Render page navigation controls."""
-            container = pagination_ref['el']
-            if container is None:
-                return
-            container.clear()
-
+        def _render_pagination_into(container) -> None:
+            """Render page navigation controls into *container*."""
             total = total_pages['v']
             page = current_page['v']
 
             with container:
                 with ui.row().classes('items-center gap-2'):
+                    # Resolve current page label as int for label-aware navigation
+                    current_label_int: int | None = None
+                    if parsed_pages['v'] and parsed_pages['v'][page].get('label'):
+                        try:
+                            current_label_int = int(parsed_pages['v'][page]['label'])
+                        except (ValueError, TypeError):
+                            pass
+
                     ui.button(
                         icon='first_page',
                         on_click=lambda: go_to_page(0),
@@ -465,18 +533,39 @@ def _build_page() -> None:
                         target_name='v',
                         backward=lambda v: v > 0,
                     )
+
+                    def _prev_page():
+                        if current_label_int is not None:
+                            _go_to_page_label(current_label_int - 1)
+                        else:
+                            go_to_page(page - 1)
+
                     ui.button(
                         icon='chevron_left',
-                        on_click=lambda: go_to_page(page - 1),
+                        on_click=_prev_page,
                     ).props('flat dense round').bind_enabled_from(
                         target_object=current_page,
                         target_name='v',
                         backward=lambda v: v > 0,
                     )
-                    ui.label(f'Page {page + 1} / {total}').classes('text-sm mx-2')
+                    page_label = ''
+                    if current_label_int is not None:
+                        page_label = f'Page {current_label_int}'
+                    else:
+                        page_label = f'Page {page + 1}'
+                    ui.label(f'{page_label}  ({page + 1} / {total})').classes(
+                        'text-sm mx-2'
+                    )
+
+                    def _next_page():
+                        if current_label_int is not None:
+                            _go_to_page_label(current_label_int + 1)
+                        else:
+                            go_to_page(page + 1)
+
                     ui.button(
                         icon='chevron_right',
-                        on_click=lambda: go_to_page(page + 1),
+                        on_click=_next_page,
                     ).props('flat dense round').bind_enabled_from(
                         target_object=current_page,
                         target_name='v',
@@ -490,15 +579,38 @@ def _build_page() -> None:
                         target_name='v',
                         backward=lambda v: v < total_pages['v'] - 1,
                     )
-                    ui.label('Go to line:').classes('text-sm ml-4')
-                    ui.number(
-                        value=page * PAGE_SIZE + 1,
-                        min=1,
-                        format='%d',
-                        on_change=lambda e: (
-                            go_to_line(int(e.value)) if e.value else None
-                        ),
-                    ).props('dense outlined').classes('w-24')
+                    ui.label('Go to page:').classes('text-sm ml-4')
+                    # Show the page label (e.g. "42" from [[Page 42]]) if available
+                    current_label = (
+                        parsed_pages['v'][page].get('label')
+                        if parsed_pages['v']
+                        else None
+                    )
+                    goto_input = (
+                        ui.number(
+                            value=int(current_label) if current_label else page + 1,
+                            min=1,
+                            format='%d',
+                        )
+                        .props('dense outlined')
+                        .classes('w-24')
+                    )
+
+                    def _goto_commit(_, inp=goto_input):
+                        if inp.value:
+                            _go_to_page_label(inp.value)
+
+                    goto_input.on('blur', _goto_commit)
+                    goto_input.on('keydown.enter', _goto_commit)
+
+        def render_pagination():
+            """Render all pagination bars."""
+            for ref in (pagination_top_ref, pagination_ref):
+                container = ref['el']
+                if container is None:
+                    continue
+                container.clear()
+                _render_pagination_into(container)
 
         def render_unpositioned():
             """Render the list of cues without a script position (drop target)."""
@@ -565,8 +677,79 @@ def _build_page() -> None:
             render_script_content()
 
         def go_to_line(line: int):
-            page = max(0, (line - 1) // PAGE_SIZE)
-            go_to_page(page)
+            """Navigate to whichever page contains *line* (1-based)."""
+            for idx, pg in enumerate(parsed_pages['v']):
+                for line_idx, _ in pg['lines']:
+                    if line_idx + 1 >= line:
+                        go_to_page(idx)
+                        return
+            go_to_page(total_pages['v'] - 1)
+
+        def _go_to_page_label(value):
+            """Jump to a page by label, finding the nearest match if exact is missing.
+
+            When the requested label doesn't exist, navigate to the nearest page
+            whose numeric label is closest to *value*.  Direction is determined by
+            comparing the target to the current page's label: if the target is
+            higher, pick the next higher existing page; if lower, pick the next
+            lower one.  Never wraps past the first or last page.
+            """
+            target = int(value)
+            pages = parsed_pages['v']
+
+            # Build a sorted list of (numeric_label, page_index) for labeled pages
+            labeled: list[tuple[int, int]] = []
+            for idx, pg in enumerate(pages):
+                lbl = pg.get('label')
+                if lbl is not None:
+                    try:
+                        labeled.append((int(lbl), idx))
+                    except (ValueError, TypeError):
+                        pass
+
+            if not labeled:
+                # No labeled pages — fall back to 1-based page index
+                go_to_page(target - 1)
+                return
+
+            labeled.sort(key=lambda t: t[0])
+
+            # Exact match
+            for lbl, idx in labeled:
+                if lbl == target:
+                    go_to_page(idx)
+                    return
+
+            # Determine direction from the current page's label
+            cur_label_val = None
+            cur_pg = pages[current_page['v']] if pages else None
+            if cur_pg and cur_pg.get('label') is not None:
+                try:
+                    cur_label_val = int(cur_pg['label'])
+                except (ValueError, TypeError):
+                    pass
+
+            if cur_label_val is not None and target < cur_label_val:
+                # Going backward — find the nearest label ≤ target
+                best = None
+                for lbl, idx in labeled:
+                    if lbl <= target:
+                        best = idx
+                    else:
+                        break
+                if best is None:
+                    best = labeled[0][1]  # clamp to first
+                go_to_page(best)
+            else:
+                # Going forward — find the nearest label ≥ target
+                best = None
+                for lbl, idx in labeled:
+                    if lbl >= target:
+                        best = idx
+                        break
+                if best is None:
+                    best = labeled[-1][1]  # clamp to last
+                go_to_page(best)
 
         # ---- actions --------------------------------------------------------
         def on_show_change(e):
@@ -729,6 +912,9 @@ def _build_page() -> None:
         with ui.splitter(value=75).classes('w-full h-full') as splitter:
             with splitter.before:
                 with ui.scroll_area().classes('w-full h-[calc(100vh-80px)]'):
+                    pagination_top_ref['el'] = ui.row().classes(
+                        'w-full justify-center p-2'
+                    )
                     script_content_ref['el'] = ui.column().classes('w-full p-4')
                     pagination_ref['el'] = ui.row().classes('w-full justify-center p-2')
 
