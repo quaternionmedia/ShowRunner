@@ -1,12 +1,2 @@
-#!/usr/bin/env python3
-from uvicorn import run
-from showrunner import ShowRunner
-
-app = ShowRunner()
-app.startup()
-try:
-    run(app.api, host="0.0.0.0", port=8000)
-except KeyboardInterrupt:
-    pass
-finally:
-    app.shutdown()
+#!/bin/bash
+uvicorn showrunner.app:app --reload

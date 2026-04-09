@@ -6,41 +6,23 @@ show control interface.
 """
 
 from nicegui import ui
-from sqlmodel import select
 
 import showrunner
-from showrunner.database import ShowDatabase
+from showrunner.plugins.db import get_db
 from showrunner.models import Show
+from showrunner.ui import header
 
 
-def _build_page(db: ShowDatabase) -> None:
+def _build_page() -> None:
     """Build the root dashboard page."""
 
     @ui.page('/')
     def index():
-        with db.session() as s:
-            shows = s.exec(select(Show).order_by(Show.name)).all()
-            options = {show.id: str(show) for show in shows}
-
         ui.dark_mode(True)
+        header()
 
-        with ui.column().classes('w-full items-center mt-16'):
-            ui.label('ShowRunner').classes('text-h3 font-bold')
-            ui.label('Show Control Dashboard').classes('text-subtitle1 text-grey')
-
-            with ui.card().classes('mt-8 w-96'):
-                ui.label('Current Show').classes('text-h6')
-                if options:
-                    ui.select(
-                        options=options,
-                        value=next(iter(options)),
-                        label='Select a show',
-                    ).classes('w-full')
-                else:
-                    ui.label('No shows found. Create one with:').classes(
-                        'text-grey mt-2'
-                    )
-                    ui.code('sr create My Show Name').classes('mt-1')
+        with ui.column().classes('w-full items-center mt-8'):
+            ui.label('Show Control Dashboard').classes('text-h4 font-bold')
 
 
 class ShowDashboardPlugin:
@@ -59,8 +41,15 @@ class ShowDashboardPlugin:
         db = getattr(app, 'db', None)
         if db is None:
             return
-        _build_page(db)
-        ui.run_with(app.api, storage_secret='showrunner')
+
+        from showrunner.ui import set_plugin_manager
+
+        set_plugin_manager(app.pm)
+
+        _build_page()
+        config = getattr(app, 'config', None)
+        secret = config.server.storage_secret if config else 'showrunner'
+        ui.run_with(app.api, storage_secret=secret)
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):
@@ -73,3 +62,11 @@ class ShowDashboardPlugin:
     @showrunner.hookimpl
     def showrunner_get_commands(self):
         return []
+
+    @showrunner.hookimpl
+    def showrunner_get_nav(self):
+        return {'label': 'Dashboard', 'path': '/', 'icon': 'dashboard', 'order': 0}
+
+    @showrunner.hookimpl
+    def showrunner_get_status(self):
+        return None

@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -7,6 +8,7 @@ from sqlmodel import select
 from typer import Argument, Option, Typer
 
 from showrunner import ShowRunner
+from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
 from showrunner.models import Cue, CueList, Script, Show
 
@@ -67,20 +69,36 @@ cli.add_typer(scripts_app, name="scripts")
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _db() -> ShowDatabase:
-    db = ShowDatabase()
+    cfg = load_config()
+    db = ShowDatabase(db_path=cfg.database.path, echo=cfg.database.echo)
     db.create_schema()
     return db
+
+
+def _show_id(show_id: int | None) -> int:
+    """Resolve show_id from explicit value or config default."""
+    if show_id is None:
+        show_id = load_config().current_show
+    if show_id is None:
+        console.print("[red]No show specified and no current-show set in config.[/red]")
+        raise typer.Exit(1)
+    return show_id
 
 
 # ---------------------------------------------------------------------------
 # Top-level commands
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 def start(
-    host: str = Option("0.0.0.0", "--host", "-H", help="Host address to bind to"),
-    port: int = Option(8000, "--port", "-p", help="Port to listen on"),
+    host: Optional[str] = Option(None, "--host", "-H", help="Host address to bind to"),
+    port: Optional[int] = Option(None, "--port", "-p", help="Port to listen on"),
+    config: Optional[Path] = Option(
+        None, "--config", "-c", help="Path to `show.toml` config file"
+    ),
     reload: bool = Option(
         False,
         "--reload",
@@ -96,9 +114,6 @@ def start(
         raise typer.Exit(1)
 
     if reload:
-        # uvicorn requires an import string (not a live object) to enable reload.
-        # Hot-reload also bypasses the ShowRunner startup hook. Use the scripts/dev
-        # helper or run uvicorn directly for development reload workflows.
         typer.echo(
             "Error: --reload is not supported via `sr start`.\n"
             "Use: uvicorn showrunner.app:app --reload  (see scripts/dev)\n"
@@ -107,15 +122,20 @@ def start(
         )
         raise typer.Exit(1)
 
-    show = ShowRunner()
+    show = ShowRunner(config_path=config)
+    # CLI flags override config file values
+    effective_host = host or show.config.server.host
+    effective_port = port or show.config.server.port
     show.startup()
-    console.print(f"[bold green]ShowRunner[/bold green] listening on [cyan]http://{host}:{port}[/cyan]")
-    console.print(f"  Dashboard:  http://{host}:{port}/")
-    console.print(f"  Scripts:    http://{host}:{port}/script")
-    console.print(f"  Admin:      http://{host}:{port}/admin")
-    console.print(f"  API docs:   http://{host}:{port}/docs")
+    console.print(
+        f"[bold green]ShowRunner[/bold green] listening on [cyan]http://{effective_host}:{effective_port}[/cyan]"
+    )
+    console.print(f"  Dashboard:  http://{effective_host}:{effective_port}/")
+    console.print(f"  Scripts:    http://{effective_host}:{effective_port}/script")
+    console.print(f"  Admin:      http://{effective_host}:{effective_port}/admin")
+    console.print(f"  API docs:   http://{effective_host}:{effective_port}/docs")
     try:
-        uvicorn_run(show.api, host=host, port=port, reload=reload)
+        uvicorn_run(show.api, host=effective_host, port=effective_port)
     except KeyboardInterrupt:
         pass
     finally:
@@ -135,7 +155,9 @@ def plugins():
     table.add_column("Description")
 
     for meta in metadata:
-        table.add_row(meta.get("name", ""), meta.get("version", ""), meta.get("description", ""))
+        table.add_row(
+            meta.get("name", ""), meta.get("version", ""), meta.get("description", "")
+        )
 
     console.print(table)
 
@@ -158,6 +180,7 @@ def create(
 # ---------------------------------------------------------------------------
 # Shows sub-commands
 # ---------------------------------------------------------------------------
+
 
 def _shows_list() -> None:
     db = _db()
@@ -193,7 +216,9 @@ def _shows_create(name: list[str], venue: Optional[str]) -> None:
         session.add(show)
         session.commit()
         session.refresh(show)
-        console.print(f'[green]Created[/green] show [bold]"{show.name}"[/bold] (id={show.id})')
+        console.print(
+            f'[green]Created[/green] show [bold]"{show.name}"[/bold] (id={show.id})'
+        )
     db.close()
 
 
@@ -214,9 +239,12 @@ def shows_create(
 
 @shows_app.command("info")
 def shows_info(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """Show details for a single show including cue lists and actors."""
+    show_id = _show_id(show_id)
     db = _db()
     show = db.get_show(show_id)
     db.close()
@@ -234,10 +262,16 @@ def shows_info(
 
 @shows_app.command("delete")
 def shows_delete(
-    show_id: int = Argument(..., help="ID of the show to delete"),
+    show_id: Optional[int] = Option(
+        None,
+        "--show",
+        "-s",
+        help="ID of the show to delete (default: current-show from config)",
+    ),
     yes: bool = Option(False, "--yes", "-y", help="Skip confirmation prompt"),
 ):
     """Delete a show and all its associated data."""
+    show_id = _show_id(show_id)
     db = _db()
     show = db.get_show(show_id)
 
@@ -247,7 +281,9 @@ def shows_delete(
         raise typer.Exit(1)
 
     if not yes:
-        typer.confirm(f'Delete show "{show.name}" (id={show_id}) and all its data?', abort=True)
+        typer.confirm(
+            f'Delete show "{show.name}" (id={show_id}) and all its data?', abort=True
+        )
 
     with db.session() as session:
         s = session.get(Show, show_id)
@@ -255,22 +291,30 @@ def shows_delete(
         session.commit()
 
     db.close()
-    console.print(f'[yellow]Deleted[/yellow] show [bold]"{show.name}"[/bold] (id={show_id})')
+    console.print(
+        f'[yellow]Deleted[/yellow] show [bold]"{show.name}"[/bold] (id={show_id})'
+    )
 
 
 # ---------------------------------------------------------------------------
 # Cue lists sub-commands
 # ---------------------------------------------------------------------------
 
+
 @cue_lists_app.command("list")
 def cue_lists_list(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """List all cue lists for a show."""
+    show_id = _show_id(show_id)
     db = _db()
     with db.session() as session:
         cue_lists = list(
-            session.exec(select(CueList).where(CueList.show_id == show_id).order_by(CueList.name))
+            session.exec(
+                select(CueList).where(CueList.show_id == show_id).order_by(CueList.name)
+            )
         )
 
     db.close()
@@ -292,11 +336,16 @@ def cue_lists_list(
 
 @cue_lists_app.command("create")
 def cue_lists_create(
-    show_id: int = Argument(..., help="ID of the show"),
     name: str = Argument(..., help="Name for the cue list (e.g. 'Act 1')"),
-    description: Optional[str] = Option(None, "--description", "-d", help="Optional description"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
+    description: Optional[str] = Option(
+        None, "--description", "-d", help="Optional description"
+    ),
 ):
     """Create a new cue list for a show."""
+    show_id = _show_id(show_id)
     db = _db()
 
     show = db.get_show(show_id)
@@ -321,6 +370,7 @@ def cue_lists_create(
 # ---------------------------------------------------------------------------
 # Cues sub-commands
 # ---------------------------------------------------------------------------
+
 
 @cues_app.command("list")
 def cues_list(
@@ -413,18 +463,20 @@ def cues_add(
 # Scripts sub-commands
 # ---------------------------------------------------------------------------
 
+
 @scripts_app.command("list")
 def scripts_list(
-    show_id: int = Argument(..., help="ID of the show"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
 ):
     """List all scripts for a show."""
+    show_id = _show_id(show_id)
     db = _db()
     with db.session() as session:
         script_rows = list(
             session.exec(
-                select(Script)
-                .where(Script.show_id == show_id)
-                .order_by(Script.title)
+                select(Script).where(Script.show_id == show_id).order_by(Script.title)
             )
         )
     db.close()
@@ -452,13 +504,20 @@ def scripts_list(
 
 @scripts_app.command("add")
 def scripts_add(
-    show_id: int = Argument(..., help="ID of the show"),
     title: str = Argument(..., help="Script title"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
     fmt: str = Option("fountain", "--format", "-f", help="Format: fountain, pdf, text"),
-    content: Optional[str] = Option(None, "--content", "-c", help="Inline script content"),
-    file: Optional[str] = Option(None, "--file", help="Path to a file to read content from"),
+    content: Optional[str] = Option(
+        None, "--content", "-c", help="Inline script content"
+    ),
+    file: Optional[str] = Option(
+        None, "--file", help="Path to a file to read content from"
+    ),
 ):
     """Add a script to a show."""
+    show_id = _show_id(show_id)
     db = _db()
 
     show = db.get_show(show_id)
@@ -470,6 +529,7 @@ def scripts_add(
     body: str | None = content
     if file:
         from pathlib import Path
+
         path = Path(file)
         if not path.exists():
             console.print(f"[red]File not found: {file}[/red]")
@@ -506,13 +566,91 @@ def scripts_delete(
             raise typer.Exit(1)
 
         if not yes:
-            typer.confirm(f'Delete script "{script.title}" (id={script_id})?', abort=True)
+            typer.confirm(
+                f'Delete script "{script.title}" (id={script_id})?', abort=True
+            )
 
         session.delete(script)
         session.commit()
 
     db.close()
-    console.print(f'[yellow]Deleted[/yellow] script [bold]"{script.title}"[/bold] (id={script_id})')
+    console.print(
+        f'[yellow]Deleted[/yellow] script [bold]"{script.title}"[/bold] (id={script_id})'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sub-app: config
+# ---------------------------------------------------------------------------
+
+config_app = Typer(
+    help="Manage ShowRunner configuration.",
+    no_args_is_help=True,
+)
+cli.add_typer(config_app, name="config")
+
+
+@config_app.command("path")
+def config_path():
+    """Print the resolved config file path."""
+    path = find_config()
+    if path is None:
+        console.print("[dim]No config file found (using built-in defaults).[/dim]")
+    else:
+        console.print(str(path))
+
+
+@config_app.command("show")
+def config_show(
+    config: Optional[Path] = Option(None, "--config", "-c", help="Path to show.toml"),
+):
+    """Print the resolved configuration."""
+    cfg = load_config(config)
+    console.print(cfg.model_dump_json(indent=2))
+
+
+@config_app.command("init")
+def config_init(
+    force: bool = Option(False, "--force", "-f", help="Overwrite existing file"),
+):
+    """Create a default show.toml in the current directory."""
+    target = Path.cwd() / "show.toml"
+    if target.exists() and not force:
+        console.print(
+            f"[yellow]{target} already exists. Use --force to overwrite.[/yellow]"
+        )
+        raise typer.Exit(1)
+
+    target.write_text(
+        """[showrunner]
+current-show = 1
+
+[database]
+# path = "show.db"
+# echo = false
+
+[server]
+# host = "0.0.0.0"
+# port = 8000
+# storage-secret = "showrunner"
+
+[logging]
+# level = "INFO"
+
+[paths]
+# scripts = "./scripts"
+# exports = "./exports"
+
+[plugins]
+# disabled = []
+
+# Per-plugin settings use [plugins.<name>] sections:
+# [plugins.lighter]
+# console-ip = "192.168.1.100"
+""",
+        encoding="utf-8",
+    )
+    console.print(f"[green]Created[/green] {target}")
 
 
 if __name__ == "__main__":

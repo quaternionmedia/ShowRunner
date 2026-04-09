@@ -95,3 +95,35 @@ class ShowRunnerSpec:
         :param event_name: Name of the event to publish (e.g. "cue_started")
         :param kwargs: Additional event data
         """
+
+    @hookspec
+    def showrunner_config_changed(self, config, previous_config):
+        """Called when the configuration file is modified and successfully reloaded.
+
+        Plugins can implement this hook to react to runtime config changes
+        without a server restart.
+
+        :param config: The new ``ShowRunnerConfig`` instance.
+        :param previous_config: The previous ``ShowRunnerConfig`` instance.
+        """
+
+    @hookspec
+    def showrunner_get_nav(self) -> dict | list[dict] | None:
+        """Return navigation entries for the global header menu.
+
+        Each entry is a dict with keys:
+            label: Display text (e.g. "Scripts")
+            path: URL path (e.g. "/script")
+            icon: Optional Material icon name (e.g. "description")
+            order: Sort order (default 50, lower = higher in menu)
+        """
+
+    @hookspec
+    def showrunner_get_status(self) -> dict | list[dict] | None:
+        """Return status icon(s) for the global header bar.
+
+        Each entry is a dict with keys:
+            icon: Material icon name (e.g. "wifi", "mic")
+            tooltip: Hover text describing the status
+            color: Quasar color name (e.g. "green", "red", "grey")
+        """

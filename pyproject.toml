@@ -10,6 +10,7 @@ dependencies = [
     "pluggy>=1.6.0",
     "sqlmodel>=0.0.37",
     "typer>=0.24.1",
+    "watchfiles>=1.0.0",
 ]
 
 [project.scripts]

@@ -1693,6 +1693,7 @@ dependencies = [
     { name = "pluggy" },
     { name = "sqlmodel" },
     { name = "typer" },
+    { name = "watchfiles" },
 ]
 
 [package.dev-dependencies]
@@ -1716,6 +1717,7 @@ requires-dist = [
     { name = "pluggy", specifier = ">=1.6.0" },
     { name = "sqlmodel", specifier = ">=0.0.37" },
     { name = "typer", specifier = ">=0.24.1" },
+    { name = "watchfiles", specifier = ">=1.0.0" },
 ]
 
 [package.metadata.requires-dev]
