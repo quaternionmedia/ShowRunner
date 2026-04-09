@@ -5,7 +5,9 @@ onto specific lines within the script text.
 """
 
 import re
+from collections import deque
 from html import escape as _escape
+from typing import Callable
 
 from nicegui import app as nicegui_app, ui
 from sqlmodel import select
@@ -27,6 +29,7 @@ LAYER_COLORS = {
 
 PAGE_SIZE = 100
 PAGE_BREAK_RE = re.compile(r'\[\[Page\s+(.+?)\]\]')
+DEFAULT_UNDO_LEVELS = 50
 
 
 def _parse_pages(lines: list[str]) -> list[dict]:
@@ -90,7 +93,7 @@ def _parse_pages(lines: list[str]) -> list[dict]:
     return pages
 
 
-def _build_page() -> None:
+def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
     """Register the /script NiceGUI page."""
 
     @ui.page('/script')
@@ -107,6 +110,9 @@ def _build_page() -> None:
         current_page: dict = {'v': 0}
         total_pages: dict = {'v': 1}
         parsed_pages: dict = {'v': []}
+
+        # undo
+        undo_stack: deque[dict] = deque(maxlen=undo_levels)
 
         # toggle for cue detail annotations
         show_details: dict = {'v': False}
@@ -174,8 +180,55 @@ def _build_page() -> None:
                     return 1
                 return max(c.number for c in cues) + 1
 
-        def _update_cue(cue_id: int, **fields) -> None:
+        def _push_undo(description: str, reverse_fn: Callable[[], None]) -> None:
+            """Push an undo entry onto the stack."""
+            undo_stack.append({'description': description, 'reverse_fn': reverse_fn})
+
+        def _perform_undo(index: int) -> None:
+            """Execute and remove a single undo entry by index."""
+            if 0 <= index < len(undo_stack):
+                entry = undo_stack[index]
+                del undo_stack[index]
+                entry['reverse_fn']()
+                ui.notify(f'Undone: {entry["description"]}')
+                refresh_all()
+
+        def _snapshot_cue(cue_id: int) -> dict | None:
+            """Return a dict of all restorable fields for a cue, or None."""
+            with get_db().session() as s:
+                cue = s.get(Cue, cue_id)
+                if cue is None:
+                    return None
+                return {
+                    'cue_list_id': cue.cue_list_id,
+                    'number': cue.number,
+                    'point': cue.point,
+                    'name': cue.name,
+                    'layer': cue.layer,
+                    'cue_type': cue.cue_type,
+                    'notes': cue.notes,
+                    'color': cue.color,
+                    'sequence': cue.sequence,
+                    'script_line': cue.script_line,
+                    'script_char': cue.script_char,
+                }
+
+        def _update_cue(
+            cue_id: int, record_undo: bool = True, **fields
+        ) -> None:
             """Update one or more fields on a cue."""
+            if record_undo:
+                old = _snapshot_cue(cue_id)
+                if old is not None:
+                    changed = {k: old[k] for k in fields if k in old}
+                    desc = f'Edit cue {old["layer"] or ""} {old["number"]}'
+                    _push_undo(
+                        desc,
+                        lambda cid=cue_id, prev=changed: _update_cue(
+                            cid, False, **prev
+                        ),
+                    )
+
             with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
                 if cue is None:
@@ -185,13 +238,29 @@ def _build_page() -> None:
                 s.add(cue)
                 s.commit()
 
-        def _delete_cue(cue_id: int) -> None:
+        def _delete_cue(cue_id: int, record_undo: bool = True) -> None:
             """Delete a cue by id."""
+            if record_undo:
+                snap = _snapshot_cue(cue_id)
+                if snap is not None:
+                    desc = f'Delete cue {snap["layer"] or ""} {snap["number"]}'
+                    _push_undo(
+                        desc,
+                        lambda s=snap: _recreate_cue(s),
+                    )
+
             with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
                 if cue is not None:
                     s.delete(cue)
                     s.commit()
+
+        def _recreate_cue(snap: dict) -> None:
+            """Re-create a cue from a snapshot dict (used by undo of delete)."""
+            with get_db().session() as s:
+                cue = Cue(**snap)
+                s.add(cue)
+                s.commit()
 
         # ---- render helpers -------------------------------------------------
         def render_cue_chip(c: dict) -> None:
@@ -307,7 +376,7 @@ def _build_page() -> None:
 
                     def _save(_, cid=c['id'], f=field, el=inp):
                         val = int(el.value) if f == 'number' and el.value else el.value
-                        _update_cue(cid, **{f: val})
+                        _update_cue(cid, True, **{f: val})
 
                     inp.on('blur', _save)
                     inp.on('keydown.enter', _save)
@@ -668,6 +737,7 @@ def _build_page() -> None:
                                 )
 
         def refresh_all():
+            render_toolbar()
             render_script_content()
             render_unpositioned()
 
@@ -818,6 +888,31 @@ def _build_page() -> None:
                     icon='add',
                     on_click=lambda: add_cue(None, None),
                 ).props('flat dense')
+                ui.separator().props('vertical')
+                _render_undo_dropdown()
+
+        def _render_undo_dropdown() -> None:
+            """Render undo button with dropdown listing individual undo entries."""
+            has_items = len(undo_stack) > 0
+            with ui.dropdown_button(
+                'Undo',
+                icon='undo',
+                split=bool(has_items),
+                on_click=(
+                    (lambda: _perform_undo(len(undo_stack) - 1))
+                    if has_items
+                    else None
+                ),
+            ).props('flat dense' + (' disable' if not has_items else '')):
+                if has_items:
+                    for idx in range(len(undo_stack) - 1, -1, -1):
+                        entry = undo_stack[idx]
+                        ui.item(
+                            entry['description'],
+                            on_click=lambda _, i=idx: (
+                                _perform_undo(i),
+                            ),
+                        )
 
         def add_cue(
             line_num: int | None = None,
@@ -842,6 +937,12 @@ def _build_page() -> None:
                 )
                 s.add(cue)
                 s.commit()
+                s.refresh(cue)
+                assert cue.id is not None
+                new_id = cue.id
+
+            desc = f'Add {layer} cue {num}'
+            _push_undo(desc, lambda cid=new_id: _delete_cue(cid, False))
 
             pos_desc = ''
             if line_num is not None:
@@ -948,7 +1049,12 @@ class ShowScripterPlugin:
         db = getattr(app, 'db', None)
         if db is None:
             return
-        _build_page()
+        settings = getattr(app, 'config', None)
+        levels = DEFAULT_UNDO_LEVELS
+        if settings is not None:
+            plugin_cfg = settings.plugins.settings.get('showscripter', {})
+            levels = int(plugin_cfg.get('undo-levels', DEFAULT_UNDO_LEVELS))
+        _build_page(undo_levels=levels)
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):
