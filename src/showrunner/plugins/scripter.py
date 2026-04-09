@@ -213,9 +213,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     'script_char': cue.script_char,
                 }
 
-        def _update_cue(
-            cue_id: int, record_undo: bool = True, **fields
-        ) -> None:
+        def _update_cue(cue_id: int, record_undo: bool = True, **fields) -> None:
             """Update one or more fields on a cue."""
             if record_undo:
                 old = _snapshot_cue(cue_id)
@@ -899,9 +897,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 icon='undo',
                 split=bool(has_items),
                 on_click=(
-                    (lambda: _perform_undo(len(undo_stack) - 1))
-                    if has_items
-                    else None
+                    (lambda: _perform_undo(len(undo_stack) - 1)) if has_items else None
                 ),
             ).props('flat dense' + (' disable' if not has_items else '')):
                 if has_items:
@@ -909,9 +905,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                         entry = undo_stack[idx]
                         ui.item(
                             entry['description'],
-                            on_click=lambda _, i=idx: (
-                                _perform_undo(i),
-                            ),
+                            on_click=lambda _, i=idx: (_perform_undo(i),),
                         )
 
         def add_cue(
