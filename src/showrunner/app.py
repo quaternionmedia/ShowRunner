@@ -5,7 +5,9 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 
 from __future__ import annotations
 
+import inspect
 import logging
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pluggy
@@ -41,8 +43,21 @@ def get_plugin_manager(
             continue
         pm.register(plugin_class())
 
-    # Discover external plugins installed via setuptools entry points
-    pm.load_setuptools_entrypoints("showrunner")
+    # Discover external plugins installed via setuptools entry points.
+    # We load them manually (instead of pm.load_setuptools_entrypoints)
+    # so that entry points pointing to a class are instantiated first —
+    # pluggy requires hook methods to be bound (i.e. on an instance).
+    for ep in entry_points(group="showrunner"):
+        if pm.get_plugin(ep.name) is not None:
+            continue
+        plugin = ep.load()
+        if inspect.isclass(plugin):
+            plugin = plugin()
+        name = getattr(plugin, "__name__", type(plugin).__name__).lower()
+        if name in disabled:
+            logger.info("Skipping disabled external plugin %s", name)
+            continue
+        pm.register(plugin, name=ep.name)
 
     return pm
 

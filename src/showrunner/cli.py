@@ -233,6 +233,9 @@ class {{class_name}}:
     @showrunner.hookimpl
     def showrunner_get_status(self):
         return None
+
+
+plugin = {{class_name}}()
 '''
 
 _PLUGIN_PYPROJECT_TEMPLATE = """\
@@ -244,7 +247,7 @@ requires-python = ">=3.10"
 dependencies = ["showrunner"]
 
 [project.entry-points."showrunner"]
-{{module_name}} = "{{module_name}}:{{class_name}}"
+{{module_name}} = "{{module_name}}:plugin"
 
 [build-system]
 requires = ["hatchling"]
@@ -333,7 +336,7 @@ def plugin_create(
     console.print(f"[green]Created[/green] plugin package at [bold]{plugin_dir}[/bold]")
     console.print(f"  Module:     {module_name}")
     console.print(f"  Class:      {class_name}")
-    console.print(f'  Entry point: {module_name} = "{module_name}:{class_name}"')
+    console.print(f'  Entry point: {module_name} = "{module_name}:plugin"')
 
     if install:
         console.print("\n[dim]Installing in editable mode…[/dim]")
