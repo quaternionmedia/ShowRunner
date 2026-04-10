@@ -1,3 +1,4 @@
+import logging
 import re
 import subprocess
 import sys
@@ -26,6 +27,36 @@ cli = Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     no_args_is_help=True,
 )
+
+
+@cli.callback()
+def main(
+    log_level: Optional[str] = Option(
+        None,
+        "--log-level",
+        "-L",
+        help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    ),
+    verbose: bool = Option(False, "--verbose", "-v", help="Shorthand for --log-level DEBUG"),
+    quiet: bool = Option(False, "--quiet", "-q", help="Shorthand for --log-level WARNING"),
+):
+    """ShowRunner CLI - Manage your live performance plugins and commands."""
+    if verbose and quiet:
+        console.print("[red]Cannot use --verbose and --quiet together.[/red]")
+        raise typer.Exit(1)
+
+    level = log_level.upper() if log_level else None
+    if verbose:
+        level = "DEBUG"
+    elif quiet:
+        level = "WARNING"
+
+    if level is not None:
+        logging.basicConfig(
+            level=level,
+            format="%(levelname)-8s %(name)s: %(message)s",
+            force=True,
+        )
 
 # ---------------------------------------------------------------------------
 # Sub-app: shows
