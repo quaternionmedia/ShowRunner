@@ -5,6 +5,7 @@ Plugins contribute navigation links and status icons via hooks.
 """
 
 from __future__ import annotations
+from contextlib import suppress
 
 from nicegui import app as nicegui_app, ui
 from sqlmodel import select
@@ -105,8 +106,10 @@ def header(pm=None) -> None:
     nav_items = _get_nav_items(pm) if pm else []
     status_icons = _get_status_icons(pm) if pm else []
 
-    with ui.header().classes("items-center justify-between px-4 py-0 shadow-md").style(
-        "background: #1a1a2e; height: 48px;"
+    with (
+        ui.header()
+        .classes("items-center justify-between px-4 py-0 shadow-md")
+        .style("background: #1a1a2e; height: 48px;")
     ):
         # -- LEFT: hamburger menu + branding --------------------------------
         with ui.row().classes("items-center gap-2 no-wrap"):
@@ -133,13 +136,21 @@ def header(pm=None) -> None:
                             ui.label(label)
 
                     ui.separator()
-
-                    # Admin is always last, treated as separate app
+                    # /api docs link
                     with ui.menu_item(
-                        on_click=lambda: ui.navigate.to("/admin/"),
+                        on_click=lambda: ui.navigate.to("/api"),
                     ).classes("gap-2"):
-                        ui.icon("admin_panel_settings").classes("text-lg")
-                        ui.label("Admin")
+                        ui.icon("api").classes("text-lg")
+                        ui.label("API Docs")
+                    # If the admin plugin is present, show an admin link
+                    with suppress(ImportError):
+                        import sqladmin  # noqa: F401
+
+                        with ui.menu_item(
+                            on_click=lambda: ui.navigate.to("/admin/"),
+                        ).classes("gap-2"):
+                            ui.icon("admin_panel_settings").classes("text-lg")
+                            ui.label("Admin")
 
             ui.link("ShowRunner", "/").classes(
                 "text-white text-weight-bold text-body1 no-underline"

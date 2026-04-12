@@ -83,7 +83,7 @@ class ShowRunner:
 
         self.pm = get_plugin_manager(self.config)
         self._config_watcher: ConfigWatcher | None = None
-        self.api = FastAPI(title="ShowRunner", version="0.1.0")
+        self.api = FastAPI(title="ShowRunner", version="0.1.0", docs_url="/api")
         self._mount_routes()
 
     def _mount_routes(self) -> None:
