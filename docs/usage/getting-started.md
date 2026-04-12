@@ -9,8 +9,12 @@ ShowRunner is a Python-based platform for managing live performances. It provide
 ### with pip
 
 ```bash
-pip install showrunner
+pip install showrunner[all]
 ```
+
+!!! note "[all] extra"
+
+    The `[all]` extra includes optional dependencies like an admin panel, CLI, and other tools. You can also install just the core API with `pip install showrunner` and add extras as needed.
 
 ### with uv (recommended for development)
 
@@ -27,27 +31,28 @@ git clone https://github.com/quaternionmedia/ShowRunner.git
 cd ShowRunner
 ```
 
-### Install dependencies and dev tools
+### Create a virtual environment (recommended)
+
+This is optional, but strongly recommended.
 
 ```bash
-uv sync
+uv venv
+source .venv/bin/activate
 ```
 
-#### Optional dependencies:
+!!! note "Using uv without a venv"
 
-Install all optional dependencies, including the admin panel:
+    If you choose not to use a virtual environment, you can run commands with `uv run [cmd]` instead of just `[cmd]` (e.g. `uv run sr start` instead of `sr start`).
+
+### Install dependencies and dev tools
 
 ```bash
 uv sync --all-extras
 ```
 
-### Activate the virtual environment
+!!! note "Core dependencies"
 
-This is optional, but strongly recommended. You can also run commands with `uv run [cmd]` if not activated.
-
-```bash
-source .venv/bin/activate
-```
+    If you want to choose which extra dependencies to install, you can run `uv sync --extra [extra_name]` for each extra group (e.g. `admin`, `cli`, etc.) or just `uv sync` to install only the core API dependencies and dev tools.
 
 ### Start the API server
 
@@ -105,7 +110,7 @@ Once running, open: [http://localhost:8000](http://localhost:8000) to access the
 | http://localhost:8000              | Dashboard (show selector)            |
 | http://localhost:8000/script       | Script viewer and cue editor         |
 | http://localhost:8000/admin        | Admin panel _(requires admin group)_ |
-| http://localhost:8000/docs         | FastAPI / OpenAPI interactive docs   |
+| http://localhost:8000/api          | FastAPI / OpenAPI interactive docs   |
 | http://localhost:8000/openapi.json | Raw OpenAPI schema                   |
 
 ---

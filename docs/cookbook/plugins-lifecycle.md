@@ -116,7 +116,7 @@ Expected output (subset):
 
 ```
 Mounted API routes:
-  ['GET'] /docs
+  ['GET'] /api
   ['GET'] /openapi.json
   ['GET'] /db/shows
   ['GET'] /db/shows/{show_id}
@@ -246,7 +246,7 @@ open http://localhost:8000/script    # Script viewer
 open http://localhost:8000/admin     # Admin panel (requires: uv sync --group admin)
 
 # FastAPI docs
-open http://localhost:8000/docs
+open http://localhost:8000/api
 ```
 
 ---

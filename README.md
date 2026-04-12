@@ -6,6 +6,10 @@ An application to help running live shows!
 
 **ShowRunner** is a collection of tools for live performances including script parsing, cue management, and more. It is built using Python and is designed to be flexible, extensible, and powerful for stage managers, designers, directors, and crew members involved in live productions.
 
+## Documentation
+
+Documentation can be found in the `docs/` directory, or available online: [quaternionmedia.github.io/ShowRunner/](https://quaternionmedia.github.io/ShowRunner/)
+
 ## Quick Start
 
 ### Install with pip
@@ -70,15 +74,6 @@ Use `sr --help` for CLI options and `sr [tool] --help` for tool-specific command
 - **ShowComms**: A communication tool for crew members to coordinate during a performance, including messaging and cue notifications
 - **ShowCmd**: A command-line interface to interact with the system with a CLI or TUI
 - **ShowRecorder**: A tool for archiving, annotating, and reviewing rehearsals and performances, including cue logs and performance notes
-
-## Documentation
-
-| Doc                                                             | Description                                    |
-| --------------------------------------------------------------- | ---------------------------------------------- |
-| [Getting Started](docs/getting-started.md)                      | Installation, first show, CLI reference        |
-| [Cookbook](docs/cookbook.md)                                    | Common tasks and code recipes                  |
-| [Plugin Load Demo](docs/plugin-load-demo.md)                    | Step-by-step plugin lifecycle walkthrough      |
-| [Plugin Architecture](docs/architecture/plugin-architecture.md) | Hook specs, ordering, shared state, deployment |
 
 ## Contributing
 

@@ -119,9 +119,7 @@ Here's a brief history of notable productions that contributed to the developmen
     - custom databases
   - Web server
     - `/` Show control page
-    - /docs - documentation and testing routes
-    - /api - show control and plugin functions
-    - /admin - Setup and configuration
+    - `/api` - show control and plugin functions
+    - `/admin` - Setup and configuration
   - `sr` command line interface
     - programatic access for show management, show control, etc.
-  -

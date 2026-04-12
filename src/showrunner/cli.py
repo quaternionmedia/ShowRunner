@@ -190,7 +190,7 @@ def start(
     console.print(f"  Dashboard:  http://{effective_host}:{effective_port}/")
     console.print(f"  Scripts:    http://{effective_host}:{effective_port}/script")
     console.print(f"  Admin:      http://{effective_host}:{effective_port}/admin")
-    console.print(f"  API docs:   http://{effective_host}:{effective_port}/docs")
+    console.print(f"  API docs:   http://{effective_host}:{effective_port}/api")
     try:
         uvicorn_run(show.api, host=effective_host, port=effective_port)
     except KeyboardInterrupt:
