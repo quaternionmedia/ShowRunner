@@ -12,6 +12,7 @@ from sqlmodel import select
 
 from showrunner.models import Show
 from showrunner.plugins.db import get_db
+from showrunner.plugins.admin import HAS_SQLADMIN
 
 # Module-level reference to the PluginManager, set during startup.
 _pm = None
@@ -135,23 +136,6 @@ def header(pm=None) -> None:
                                 ui.icon(icon).classes("text-lg")
                             ui.label(label)
 
-                    ui.separator()
-                    # /api docs link
-                    with ui.menu_item(
-                        on_click=lambda: ui.navigate.to("/api"),
-                    ).classes("gap-2"):
-                        ui.icon("api").classes("text-lg")
-                        ui.label("API Docs")
-                    # If the admin plugin is present, show an admin link
-                    with suppress(ImportError):
-                        import sqladmin  # noqa: F401
-
-                        with ui.menu_item(
-                            on_click=lambda: ui.navigate.to("/admin/"),
-                        ).classes("gap-2"):
-                            ui.icon("admin_panel_settings").classes("text-lg")
-                            ui.label("Admin")
-
             ui.link("ShowRunner", "/").classes(
                 "text-white text-weight-bold text-body1 no-underline"
             )
@@ -192,8 +176,16 @@ def header(pm=None) -> None:
         with ui.row().classes("items-center gap-1 no-wrap"):
             with ui.button(icon="person").props("flat round dense color=white"):
                 with ui.menu().classes("min-w-40"):
+                    # /api docs link
                     with ui.menu_item(
-                        on_click=lambda: ui.navigate.to("/admin/"),
+                        on_click=lambda: ui.navigate.to("/api"),
                     ).classes("gap-2"):
-                        ui.icon("admin_panel_settings").classes("text-lg")
-                        ui.label("Admin")
+                        ui.icon("api").classes("text-lg")
+                        ui.label("API Docs")
+                    # If the admin plugin is present, show an admin link
+                    if HAS_SQLADMIN:
+                        with ui.menu_item(
+                            on_click=lambda: ui.navigate.to("/admin/"),
+                        ).classes("gap-2"):
+                            ui.icon("admin_panel_settings").classes("text-lg")
+                            ui.label("Admin")
