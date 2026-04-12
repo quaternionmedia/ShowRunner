@@ -38,7 +38,7 @@ uv sync
 Install all optional dependencies, including the admin panel:
 
 ```bash
-uv sync --all-groups
+uv sync --all-extras
 ```
 
 ### Activate the virtual environment

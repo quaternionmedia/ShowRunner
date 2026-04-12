@@ -5,7 +5,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-import typer
+try:
+    import typer
+except ImportError:
+    print(
+        "Typer is required for the CLI. "
+        "Run: `uv sync --extra cli` or `pip install showrunner[cli]`",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
@@ -37,8 +45,12 @@ def main(
         "-L",
         help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     ),
-    verbose: bool = Option(False, "--verbose", "-v", help="Shorthand for --log-level DEBUG"),
-    quiet: bool = Option(False, "--quiet", "-q", help="Shorthand for --log-level WARNING"),
+    verbose: bool = Option(
+        False, "--verbose", "-v", help="Shorthand for --log-level DEBUG"
+    ),
+    quiet: bool = Option(
+        False, "--quiet", "-q", help="Shorthand for --log-level WARNING"
+    ),
 ):
     """ShowRunner CLI - Manage your live performance plugins and commands."""
     if verbose and quiet:
@@ -57,6 +69,7 @@ def main(
             format="%(levelname)-8s %(name)s: %(message)s",
             force=True,
         )
+
 
 # ---------------------------------------------------------------------------
 # Sub-app: shows

@@ -8,31 +8,52 @@ An application to help running live shows!
 
 ## Quick Start
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+### Install with pip
+
+```bash
+pip install showrunner[all]
+```
+
+The `[all]` extra includes optional dependencies for the admin panel, CLI, and other tools. You can also install just the core API with `pip install showrunner` and add extras as needed.
+
+### Install from source
+
+Requires [uv](https://docs.astral.sh/uv/)
+
+#### Clone the repo
 
 ```bash
 git clone https://github.com/quaternionmedia/ShowRunner.git
 cd ShowRunner
+```
 
-# Install the dependencies and dev tools
-uv sync
+#### Create a virtual environment (recommended)
 
-# Activate the virtual environment (optional, or run commands with `uv run [cmd]` if not activated)
+```bash
+uv venv
+# Activate the virtual environment:
 source .venv/bin/activate
+```
 
-# Start the API server
+If you are not using a virtual environment, run commands with `uv run [cmd]`
+
+#### Install dependencies
+
+Including dev tools and optional extras (admin panel, CLI, etc.)
+
+```bash
+uv sync --all-extras
+```
+
+## Start the API server
+
+```bash
 sr start
 ```
 
 Visit [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
 
-### Optional:
-
-Install optional admin panel:
-
-```bash
-uv sync --group admin
-```
+Use `sr --help` for CLI options and `sr [tool] --help` for tool-specific commands.
 
 ## Tools
 
