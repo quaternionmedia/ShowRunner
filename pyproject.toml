@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
     "fastapi>=0.135.2",
+    "fpdf2>=2.8.7",
     "nicegui>=2.0",
     "pluggy>=1.6.0",
+    "screenplay-tools>=0.0.10",
     "sqlmodel>=0.0.37",
     "watchfiles>=1.0.0",
 ]
