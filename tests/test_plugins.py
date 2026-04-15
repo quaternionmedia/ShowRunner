@@ -13,7 +13,7 @@ EXPECTED_PLUGIN_COUNT = 15
 
 
 def test_get_builtin_plugins_count():
-    """Exactly 14 plugins are registered by default."""
+    """Exactly 15 plugins are registered by default."""
     assert len(get_builtin_plugins()) == EXPECTED_PLUGIN_COUNT
 
 

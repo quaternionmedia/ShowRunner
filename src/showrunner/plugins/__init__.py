@@ -12,6 +12,7 @@ from .prompter import ShowPrompterPlugin
 from .comms import ShowCommsPlugin
 from .cmd import ShowCmdPlugin
 from .recorder import ShowRecorderPlugin
+from .voicer import ShowVoicerPlugin
 from .db import ShowDBPlugin
 from .admin import ShowAdminPlugin
 from .dashboard import ShowDashboardPlugin
@@ -32,6 +33,7 @@ def get_builtin_plugins() -> list[type]:
         ShowCommsPlugin,
         ShowCmdPlugin,
         ShowRecorderPlugin,
+        ShowVoicerPlugin,
         ShowDBPlugin,
         ShowAdminPlugin,
         ShowDashboardPlugin,

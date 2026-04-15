@@ -25,6 +25,13 @@ all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
+# AV tool integrations — install with: uv sync --group av
+av = [
+    "simpleobsws>=5.0",    # ShowRecorder: OBS websocket v5 client
+    "python-osc>=1.8",     # ShowMixer + ShowProgrammer: OSC client
+    "kokoro>=0.9",         # ShowVoicer: local neural TTS engine
+    "soundfile>=0.12",     # ShowVoicer: WAV file output
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
