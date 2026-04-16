@@ -31,7 +31,8 @@ uv sync --group av
 
 ```bash
 sr create "ShowRunner Intro" --venue "localhost"
-# Note the show ID returned (usually 1)
+# Note the show ID returned, then update show.toml:
+#   current-show = <id>
 ```
 
 ### 3. Import the script
@@ -48,8 +49,17 @@ sr scripts add "ShowRunner: A Self-Producing Introduction" \
 sr cue-lists create "RECORDING" --show 1
 sr cue-lists create "AUDIO"     --show 1
 sr cue-lists create "PLAYBACK"  --show 1
-# Note the list IDs (e.g. 1, 2, 3)
 ```
+
+Confirm the IDs assigned (creation order determines ID):
+
+```bash
+sr cue-lists list --show 1
+# Or via API once the server is up: GET /db/shows/1/cue-lists
+```
+
+> **Note the PLAYBACK list ID** — you will need it in the Recording Session
+> section.  In a fresh database the IDs will be 1, 2, 3 respectively.
 
 ### 5. Populate the RECORDING cue list (Video layer → OBS)
 
@@ -66,17 +76,33 @@ sr cues add <list_id> 5 "Scene: Terminal"   --layer Video --type Network
 sr cues add <list_id> 99 "Rec: Wrap"        --layer Video --type Network
 ```
 
-For each cue that should dispatch OSC, edit the cue's `notes` field via
-the API (`PATCH /db/cues/{id}`) or the ShowAdmin UI (`/admin`).
+For each cue, attach notes via `PATCH /db/cues/{id}` (or `sr cues add ... --notes`):
 
-Example notes JSON for `Scene: Terminal`:
+**Scene switches** use the `http` action to call ShowRecorder's REST endpoint
+(OBS uses WebSocket, not OSC — do not use the `osc` key for scene switches):
 
 ```json
-{"osc": {"address": "/obs/scene", "args": ["Terminal"]}}
+{"http": {"method": "POST", "path": "/recorder/scene", "params": {"scene": "Terminal"}}}
 ```
 
-For `Rec: Start` / `Rec: Wrap`, use `POST /recorder/record?action=start`
-from the ShowProgrammer's cue notes — or fire the REST endpoint directly.
+**Record start/stop:**
+
+```json
+{"http": {"method": "POST", "path": "/recorder/record", "params": {"action": "start"}}}
+```
+
+```json
+{"http": {"method": "POST", "path": "/recorder/record", "params": {"action": "stop"}}}
+```
+
+**Ardour transport** (AUDIO cue list) still uses OSC, dispatched to
+`osc-targets` in `show.toml`:
+
+```json
+{"osc": {"address": "/ardour/transport_play", "args": []}}
+```
+
+A cue can carry both `http` and `osc` keys to fire multiple systems at once.
 
 ### 6. Populate the AUDIO cue list (Audio layer → Ardour)
 
@@ -109,11 +135,23 @@ Cue 4.0 is the one the viewer watches fire on screen. Its notes:
 
 ### 8. Generate voice-over audio
 
+Requires the `av` dependency group (`uv sync --group av`).
+
 ```bash
-# Start ShowRunner first, then call the API:
+# Start ShowRunner (if not already running), wait until ready, then generate:
 sr start &
+until curl -s http://localhost:8000/ > /dev/null 2>&1; do sleep 1; done
 curl -X POST "http://localhost:8000/voicer/generate?show_id=1&script_id=1"
 ```
+
+Verify all 6 files were written (`generated` must equal `total`):
+
+```bash
+curl -s "http://localhost:8000/voicer/files"
+# → {"directory": "/absolute/path/exports/narration", "files": ["vo-1-paradox.wav", ...], "count": 6}
+```
+
+If `generated: 0`, the av group is not installed — run `uv sync --group av` and retry.
 
 This writes 6 WAV files to `./exports/narration/`:
 
@@ -166,18 +204,38 @@ curl "http://localhost:8000/voicer/export/ardour?script_id=1" | jq .file
 ## Recording Session
 
 ```bash
-sr start                              # ShowRunner API up on :8000
+sr start &
 
-# Browser tabs to have open:
-#   localhost:8000/script             → script with cue markers
-#   localhost:8000/programmer         → ShowProgrammer GO panel
-#   localhost:8000/docs               → API reference
+# Wait for the server to be ready before proceeding:
+until curl -s http://localhost:8000/ > /dev/null 2>&1; do sleep 1; done
+echo "ShowRunner is up"
+```
 
-# Stage manager fires from /programmer:
+Browser tabs to have open:
 
-POST /programmer/go?cue_list_id=3&show_id=1    # Go: Boot  → OBS records, Ardour rolls
-POST /programmer/go?cue_list_id=3&show_id=1    # Go: Meta  → The visible on-screen cue
-POST /programmer/go?cue_list_id=3&show_id=1    # Go: Wrap  → OBS stops, Ardour saves
+- `localhost:8000/script` → script with cue markers
+- `localhost:8000/programmer` → ShowProgrammer GO panel
+- `localhost:8000/docs` → API reference (Swagger UI)
+
+Look up your PLAYBACK cue list ID if needed:
+
+```bash
+curl -s "http://localhost:8000/db/shows/1/cue-lists" | jq '.[] | select(.name=="PLAYBACK") | .id'
+# substitute that ID for PLAYBACK_ID below
+```
+
+Stage manager fires three GOs from `/programmer` (replace `PLAYBACK_ID` with
+the PLAYBACK list ID noted in Step 4):
+
+```bash
+curl -X POST "http://localhost:8000/programmer/go?cue_list_id=PLAYBACK_ID&show_id=1"
+# Go: Boot  → OBS records, Ardour rolls
+
+curl -X POST "http://localhost:8000/programmer/go?cue_list_id=PLAYBACK_ID&show_id=1"
+# Go: Meta  → the visible on-screen cue
+
+curl -X POST "http://localhost:8000/programmer/go?cue_list_id=PLAYBACK_ID&show_id=1"
+# Go: Wrap  → OBS stops, Ardour saves
 ```
 
 The `/programmer` NiceGUI page (once built out) will provide a single **GO**
@@ -242,17 +300,24 @@ a second audio track alongside the Ardour mix.
 
 ## Cue Notes JSON Schema
 
-Any cue can carry an OSC payload in its `notes` field:
+A cue's `notes` field is a JSON string with up to three optional keys.
+All keys are independent — a cue can carry any combination.
 
 ```json
 {
-  "scene": "Human-readable label (shown in CueLog)",
+  "scene": "Human-readable label written to CueLog on fire",
   "osc": {
     "address": "/ardour/transport_play",
     "args": []
+  },
+  "http": {
+    "method": "POST",
+    "path": "/recorder/scene",
+    "params": {"scene": "Terminal"}
   }
 }
 ```
 
-ShowProgrammer reads this on `GO` or `/programmer/cue/{number}` and
-broadcasts to all `osc-targets` in `show.toml`.
+- **`"scene"`** — label stored in `CueLog.notes`; appears in the cue log view and MLT export comments.
+- **`"osc"`** — dispatched via UDP to all `osc-targets` in `show.toml` (e.g. Ardour).
+- **`"http"`** — dispatched as an internal HTTP call to another ShowRunner endpoint (e.g. ShowRecorder for OBS).
