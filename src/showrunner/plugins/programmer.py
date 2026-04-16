@@ -364,7 +364,16 @@ def _build_page() -> None:
 
     from showrunner.models import Cue, CueList
     from showrunner.plugins.db import get_db
-    from showrunner.ui import _current_show_id, header
+    from showrunner.ui import header
+
+    def _load_shows() -> dict[int, str]:
+        try:
+            from showrunner.models import Show
+            with get_db().session() as s:
+                shows = s.exec(select(Show).order_by(Show.name)).all()
+                return {sh.id: sh.name for sh in shows}
+        except Exception:
+            return {}
 
     def _load_cue_lists(show_id: int | None) -> dict[int, str]:
         if show_id is None:
@@ -389,62 +398,140 @@ def _build_page() -> None:
 
     @ui.page("/programmer")
     async def programmer_page():
+        from datetime import datetime as _dt
+
         ui.dark_mode(True)
         header()
 
-        show_id = _current_show_id()
-        cue_lists = _load_cue_lists(show_id)
-
-        stored = nicegui_app.storage.general.get("programmer_cue_list_id")
-        if stored in cue_lists:
-            initial_id = stored
-        elif cue_lists:
-            initial_id = next(iter(cue_lists))
+        shows = _load_shows()
+        stored_show = nicegui_app.storage.general.get("current_show")
+        if stored_show in shows:
+            initial_show_id = stored_show
+        elif shows:
+            initial_show_id = next(iter(shows))
         else:
-            initial_id = None
+            initial_show_id = None
 
-        state: dict[str, Any] = {"cue_list_id": initial_id}
+        cue_lists = _load_cue_lists(initial_show_id)
+        stored_list = nicegui_app.storage.general.get("programmer_cue_list_id")
+        if stored_list in cue_lists:
+            initial_list_id = stored_list
+        elif cue_lists:
+            initial_list_id = next(iter(cue_lists))
+        else:
+            initial_list_id = None
+
+        state: dict[str, Any] = {
+            "show_id": initial_show_id,
+            "cue_list_id": initial_list_id,
+            "last_fire": None,   # datetime of most-recent GO
+            "last_name": "",     # name of last-fired cue
+        }
 
         with ui.column().classes("w-full max-w-3xl mx-auto mt-6 px-4 gap-4"):
-            ui.label("Programmer").classes("text-h5 font-bold")
+            # Title row + clock
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label("Programmer").classes("text-h5 font-bold")
+
+                with ui.column().classes("items-end gap-0"):
+                    clock_lbl = ui.label("").classes(
+                        "text-h4 font-mono tracking-widest text-grey-4"
+                    )
+                    fired_lbl = ui.label("").classes("text-caption text-grey-6 text-right")
+
+            # Tick every half-second: update clock + sync colour to last fire
+            def _tick():
+                now = _dt.now()
+                clock_lbl.set_text(now.strftime("%H:%M:%S"))
+                t = state["last_fire"]
+                if t is None:
+                    clock_lbl.classes(replace="text-h4 font-mono tracking-widest text-grey-4")
+                    fired_lbl.set_text("")
+                    return
+                elapsed = (now - t).total_seconds()
+                if elapsed < 1.5:
+                    clock_lbl.classes(
+                        replace="text-h4 font-mono tracking-widest text-green-4"
+                    )
+                elif elapsed < 5:
+                    clock_lbl.classes(
+                        replace="text-h4 font-mono tracking-widest text-green-7"
+                    )
+                else:
+                    clock_lbl.classes(
+                        replace="text-h4 font-mono tracking-widest text-grey-4"
+                    )
+                fired_lbl.set_text(
+                    f"↳ {state['last_name']}  +{int(elapsed)}s"
+                )
+
+            ui.timer(0.5, _tick)
 
             feedback = ui.label("").classes("text-caption text-grey-5")
 
-            # Cue-list selector
-            with ui.row().classes("items-center gap-4 w-full"):
-                if cue_lists:
-                    def _on_list_change(e):
-                        state["cue_list_id"] = e.value
-                        nicegui_app.storage.general["programmer_cue_list_id"] = e.value
+            # Show + cue-list selectors
+            with ui.row().classes("items-center gap-4 w-full flex-wrap"):
+                if not shows:
+                    ui.label(
+                        "No shows found — run: python examples/setup_intro.py"
+                    ).classes("text-grey-5")
+                else:
+                    @ui.refreshable
+                    def cue_list_selector():
+                        cl = _load_cue_lists(state["show_id"])
+                        cl_val = state["cue_list_id"] if state["cue_list_id"] in cl else (
+                            next(iter(cl), None)
+                        )
+                        state["cue_list_id"] = cl_val
+
+                        def _on_list_change(e):
+                            state["cue_list_id"] = e.value
+                            nicegui_app.storage.general["programmer_cue_list_id"] = e.value
+                            cue_stack.refresh()
+
+                        if cl:
+                            ui.select(
+                                options=cl,
+                                value=cl_val,
+                                label="Cue List",
+                                on_change=_on_list_change,
+                            ).classes("min-w-44")
+                        else:
+                            ui.label("No cue lists for this show.").classes("text-grey-5")
+
+                    def _on_show_change(e):
+                        state["show_id"] = e.value
+                        nicegui_app.storage.general["current_show"] = e.value
+                        cue_list_selector.refresh()
                         cue_stack.refresh()
 
                     ui.select(
-                        options=cue_lists,
-                        value=initial_id,
-                        label="Cue List",
-                        on_change=_on_list_change,
+                        options=shows,
+                        value=initial_show_id,
+                        label="Show",
+                        on_change=_on_show_change,
                     ).classes("min-w-52")
-                else:
-                    ui.label("No cue lists — run: python examples/setup_intro.py").classes(
-                        "text-grey-5"
-                    )
+
+                    cue_list_selector()
 
             # GO / RESET buttons
             with ui.row().classes("gap-3 items-center"):
 
                 async def _on_go():
-                    if state["cue_list_id"] is None or show_id is None:
-                        feedback.set_text("Select a cue list first.")
+                    if state["cue_list_id"] is None or state["show_id"] is None:
+                        feedback.set_text("Select a show and cue list first.")
                         return
                     try:
                         result = await go(
                             cue_list_id=state["cue_list_id"],
-                            show_id=show_id,
+                            show_id=state["show_id"],
                         )
                         num = result.get("number", "?")
                         point = result.get("point", 0)
                         name = result.get("name", "?")
                         num_str = f"{num}.{point}" if point else str(num)
+                        state["last_fire"] = _dt.now()
+                        state["last_name"] = f"{num_str} — {name}"
                         feedback.set_text(f"GO → {num_str}  {name}")
                         feedback.classes(replace="text-caption text-green-5")
                     except Exception as exc:
@@ -459,6 +546,8 @@ def _build_page() -> None:
 
                 async def _on_reset():
                     await reset()
+                    state["last_fire"] = None
+                    state["last_name"] = ""
                     feedback.set_text("Reset to top.")
                     feedback.classes(replace="text-caption text-grey-5")
                     cue_stack.refresh()
@@ -473,7 +562,6 @@ def _build_page() -> None:
                     ui.label("No cues in this list.").classes("text-grey-5 mt-4")
                     return
 
-                # Determine next-to-fire index
                 pointer = (
                     _cue_pointer
                     if _active_cue_list_id == state["cue_list_id"]

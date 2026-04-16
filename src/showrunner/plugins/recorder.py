@@ -193,27 +193,35 @@ async def status():
 
 @router.post("/scene")
 async def switch_scene(scene: str = Query(..., description="OBS scene name to activate")):
-    """Switch the active OBS scene by name."""
-    # app reference stored at startup; fall back gracefully
+    """Switch the active OBS scene by name.
+
+    Returns 200 with ``switched=false`` when OBS is not running rather than
+    502, so HTTP-keyed cues in ShowProgrammer degrade gracefully.
+    """
     from showrunner.plugins.recorder import _app_ref
     if _app_ref is None:
         raise HTTPException(status_code=503, detail="Plugin not yet started")
     result = await _obs_request(_app_ref, "SetCurrentProgramScene", {"sceneName": scene})
     if result is None:
-        raise HTTPException(status_code=502, detail="OBS unreachable or simpleobsws not installed")
+        logger.info("Scene switch to %r skipped — OBS not connected", scene)
+        return {"scene": scene, "switched": False, "warning": "OBS not connected"}
     return {"scene": scene, "switched": True}
 
 
 @router.post("/record")
 async def control_record(action: str = Query(..., description="start or stop")):
-    """Start or stop OBS recording."""
+    """Start or stop OBS recording.
+
+    Returns 200 with ``ok=false`` when OBS is not running rather than 502.
+    """
     from showrunner.plugins.recorder import _app_ref
     if _app_ref is None:
         raise HTTPException(status_code=503, detail="Plugin not yet started")
     request_type = "StartRecord" if action == "start" else "StopRecord"
     result = await _obs_request(_app_ref, request_type)
     if result is None:
-        raise HTTPException(status_code=502, detail="OBS unreachable or simpleobsws not installed")
+        logger.info("Record %r skipped — OBS not connected", action)
+        return {"action": action, "ok": False, "warning": "OBS not connected"}
     return {"action": action, "ok": True}
 
 

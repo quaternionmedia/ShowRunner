@@ -338,8 +338,8 @@ def test_recorder_status_connected_when_obs_responds(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_recorder_stop_raises_502_when_obs_unreachable(tmp_path):
-    """Stopping when OBS is unreachable must return 502, not a misleading ok:True."""
+def test_recorder_stop_returns_warning_when_obs_unreachable(tmp_path):
+    """When OBS is unreachable, /record returns 200 with ok=False and a warning."""
     db = ShowDatabase(tmp_path / "rec.db")
     db.create_schema()
     client = _make_recorder_client(db)
@@ -349,11 +349,15 @@ def test_recorder_stop_raises_502_when_obs_unreachable(tmp_path):
     ):
         response = client.post("/recorder/record?action=stop")
 
-    assert response.status_code == 502
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "warning" in body
     db.close()
 
 
-def test_recorder_start_raises_502_when_obs_unreachable(tmp_path):
+def test_recorder_start_returns_warning_when_obs_unreachable(tmp_path):
+    """When OBS is unreachable, /record returns 200 with ok=False and a warning."""
     db = ShowDatabase(tmp_path / "rec.db")
     db.create_schema()
     client = _make_recorder_client(db)
@@ -363,7 +367,10 @@ def test_recorder_start_raises_502_when_obs_unreachable(tmp_path):
     ):
         response = client.post("/recorder/record?action=start")
 
-    assert response.status_code == 502
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert "warning" in body
     db.close()
 
 
