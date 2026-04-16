@@ -9,12 +9,24 @@ integrates with the Showrunner framework to expose API routes for accessing
 and manipulating the database contents.
 """
 
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import select
 
 import showrunner
 from showrunner.database import ShowDatabase
 from showrunner.models import Actor, Config, Cue, CueList, CueLog, Show
+
+
+class CueUpdate(BaseModel):
+    """Partial update body for PATCH /db/cues/{cue_id}."""
+
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    layer: Optional[str] = None
+    color: Optional[str] = None
 
 router = APIRouter(prefix='/db', tags=['ShowDB'])
 
@@ -68,18 +80,50 @@ async def create_show(name: str, venue: str | None = None):
         return show.model_dump()
 
 
-@router.get('/shows/{show_id}/cues')
-async def list_cues(show_id: int):
-    """Return all cues across every cue list for a show."""
+@router.get('/shows/{show_id}/cue-lists')
+async def list_cue_lists(show_id: int):
+    """Return all cue lists for a show."""
     with _db.session() as s:
-        stmt = (
-            select(Cue)
-            .join(CueList)
-            .where(CueList.show_id == show_id)
-            .order_by(Cue.number, Cue.point)
-        )
+        show = s.get(Show, show_id)
+        if not show:
+            raise HTTPException(status_code=404, detail='Show not found')
+        cue_lists = s.exec(
+            select(CueList).where(CueList.show_id == show_id).order_by(CueList.id)
+        ).all()
+        return [cl.model_dump() for cl in cue_lists]
+
+
+@router.get('/shows/{show_id}/cues')
+async def list_cues(
+    show_id: int,
+    cue_list_id: Optional[int] = Query(None, description="Filter by cue list ID"),
+):
+    """Return cues for a show, optionally filtered to one cue list."""
+    with _db.session() as s:
+        stmt = select(Cue).join(CueList).where(CueList.show_id == show_id)
+        if cue_list_id is not None:
+            stmt = stmt.where(Cue.cue_list_id == cue_list_id)
+        stmt = stmt.order_by(Cue.number, Cue.point)
         cues = s.exec(stmt).all()
         return [cue.model_dump() for cue in cues]
+
+
+@router.patch('/cues/{cue_id}')
+async def update_cue(cue_id: int, body: CueUpdate):
+    """Partially update a cue's name, notes, layer, or color."""
+    with _db.session() as s:
+        cue = s.get(Cue, cue_id)
+        if not cue:
+            raise HTTPException(status_code=404, detail=f'Cue {cue_id} not found')
+        update_data = body.model_dump(exclude_unset=True)
+        if not update_data:
+            raise HTTPException(status_code=422, detail='No fields provided to update')
+        for field, value in update_data.items():
+            setattr(cue, field, value)
+        s.add(cue)
+        s.commit()
+        s.refresh(cue)
+        return cue.model_dump()
 
 
 @router.get('/shows/{show_id}/actors')
