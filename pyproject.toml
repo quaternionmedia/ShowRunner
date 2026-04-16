@@ -50,6 +50,8 @@ select = ["E", "F", "W", "I"]
 "src/showrunner/plugins/__init__.py" = ["I001"]
 # Inline JS strings in the scripter UI are intentionally long.
 "src/showrunner/plugins/scripter.py" = ["E501"]
+# Example scripts contain long cue notes data literals — readability over line length.
+"examples/*.py" = ["E501"]
 
 [build-system]
 requires = ["uv_build>=0.11.2,<0.12"]

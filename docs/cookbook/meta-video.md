@@ -4,36 +4,148 @@ A complete AV recording pipeline managed entirely by ShowRunner.
 ShowRunner controls OBS (video capture), Ardour (audio), and generates its own
 narration via Kokoro TTS — while being recorded by the very cues it fires.
 
-Each block below is independently runnable. Shell variables (`SHOW_ID`,
-`REC_LIST`, etc.) thread context from one block to the next.
-
 ---
 
-## Prerequisites
+## Quick start (automated)
 
-Install AV dependencies and start the server:
+The fastest path: one Python script populates the entire show — cue lists,
+cues with notes, and voice-over — against a running ShowRunner instance.
+
+### 1. Prerequisites
+
+Install AV dependencies:
 
 ```bash
 uv sync --group av
-sr start &
-until curl -s http://localhost:8000/ > /dev/null 2>&1; do sleep 1; done
-echo "ShowRunner ready"
 ```
 
-Configure OBS WebSocket and the output directory in `show.toml`:
+**Windows** — Install [eSpeak NG](https://github.com/espeak-ng/espeak-ng/releases)
+for TTS phonemization. The default installer path is
+`C:\Program Files\eSpeak NG\` and ShowRunner auto-detects it — no manual
+`PATH` changes needed.
+
+**macOS / Linux** — install via package manager if voice generation fails:
+
+```bash
+brew install espeak-ng          # macOS
+sudo apt install espeak-ng      # Debian / Ubuntu
+```
+
+### 2. Configure `show.toml`
 
 ```toml
 [plugins.recorder]
-obs-host     = "localhost"
-obs-port     = 4455
-obs-password = "your-password"
-obs-output-dir = "~/Videos"   # where OBS saves recordings — used for MLT export
+obs-host       = "localhost"
+obs-port       = 4455
+obs-password   = "your-obs-password"   # from OBS → Tools → WebSocket Server Settings
+obs-output-dir = "~/Videos"            # OBS recording output path (for MLT export)
 
 [plugins.voicer]
-voice = "af_heart"
-speed = 1.0
+voice      = "af_heart"
+speed      = 1.0
 output-dir = "./exports/narration"
 ```
+
+### 3. Start ShowRunner and run the setup script
+
+```bash
+sr start &
+until curl -s http://localhost:8000/ > /dev/null 2>&1; do sleep 1; done
+
+python examples/setup_intro.py
+```
+
+The script is idempotent — run it again if anything fails partway through.
+Expected output:
+
+```text
+ShowRunner Intro — automated setup
+Target: http://localhost:8000
+==================================================
+[1/6] Checking server …
+  Server is up.
+[2/6] Finding / creating show …
+  Created show  id=1
+[3/6] Importing script …
+  Imported script  id=1  (2847 chars)
+[4/6] Creating cue lists …
+  RECORDING=1  AUDIO=2  PLAYBACK=3
+  Added 7 RECORDING cues.
+  Added 4 AUDIO cues.
+  Added 3 PLAYBACK cues.
+[5/6] Generating voice-over …
+  Generated 6/6 WAV files.
+[6/6] Checking AV connections …
+  WARNING: OBS not connected (status=not_connected). …
+  Ardour target: localhost:3819
+==================================================
+Setup complete!
+  Dashboard:    http://localhost:8000/
+  Script view:  http://localhost:8000/script
+  Programmer:   http://localhost:8000/programmer
+  Show ID:      1
+  PLAYBACK list ID for recording: 3
+```
+
+Open `http://localhost:8000` — the show, script, and cue lists are live.
+
+### 4. Run the recording session
+
+With OBS and Ardour running, fire the three GOs from the Programmer page
+(`http://localhost:8000/programmer`) or via curl using the PLAYBACK list ID
+printed above:
+
+```bash
+PLAYBACK_ID=3   # from setup_intro.py output above
+SHOW_ID=1
+
+# GO 1 — Boot: OBS records, Ardour rolls
+curl -s -X POST "http://localhost:8000/programmer/go?cue_list_id=$PLAYBACK_ID&show_id=$SHOW_ID"
+
+# GO 2 — Meta: the on-screen moment
+curl -s -X POST "http://localhost:8000/programmer/go?cue_list_id=$PLAYBACK_ID&show_id=$SHOW_ID"
+
+# GO 3 — Wrap: OBS stops, Ardour saves
+curl -s -X POST "http://localhost:8000/programmer/go?cue_list_id=$PLAYBACK_ID&show_id=$SHOW_ID"
+```
+
+---
+
+## Troubleshooting
+
+### Voice-over generates 0 files on Windows
+
+ShowRunner auto-detects eSpeak NG at `C:\Program Files\eSpeak NG\`.
+If installed elsewhere, set the path before starting ShowRunner:
+
+```bash
+export PHONEMIZER_ESPEAK_PATH="C:/path/to/espeak-ng.exe"
+sr start
+```
+
+### OBS not connected
+
+Enable the WebSocket server in OBS: `Tools → WebSocket Server Settings → Enable`.
+Copy the password to `show.toml` under `[plugins.recorder]`.
+
+### `uv sync` fails with simpleobsws unsatisfiable
+
+The package version is `1.x`, not `5.x` — make sure `pyproject.toml` has
+`simpleobsws>=1.0`.
+
+### `kokoro` import error after `uv sync --group av`
+
+Model weights (~300 MB) download on first use. Run the setup script with
+`--skip-vo` first to verify the rest of the setup, then run again without
+it once the download completes.
+
+---
+
+## Manual blocks (reference)
+
+The sections below document each setup step individually — useful for
+adapting the pattern to a different show or debugging a specific step.
+The automated setup script above performs all of these in sequence.
 
 ---
 
