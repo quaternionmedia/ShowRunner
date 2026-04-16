@@ -43,6 +43,7 @@ _DEFAULT_OSC_TARGETS: list[dict] = []  # [{host, port}, ...]
 # Tracks the "next cue" index across the currently active cue list.
 _cue_pointer: int = 0
 _active_cues: list[Cue] = []
+_active_cue_list_id: int | None = None
 
 
 def _get_cfg(app: Any) -> dict[str, Any]:
@@ -50,6 +51,45 @@ def _get_cfg(app: Any) -> dict[str, Any]:
     return getattr(app, "config", None) and app.config.plugins.settings.get(
         "programmer", {}
     ) or {}
+
+
+def _self_base_url(app: Any) -> str:
+    """Return the ShowRunner base URL for internal HTTP cue dispatch."""
+    config = getattr(app, "config", None)
+    if config is not None:
+        host = config.server.host
+        port = config.server.port
+        # Bind address 0.0.0.0 means loopback for internal calls
+        if host in ("0.0.0.0", ""):
+            host = "127.0.0.1"
+        return f"http://{host}:{port}"
+    return "http://127.0.0.1:8000"
+
+
+def _dispatch_http(app: Any, method: str, path: str, params: dict | None) -> bool:
+    """Make an internal HTTP request to another ShowRunner endpoint.
+
+    Used by cues with an ``"http"`` key in their notes JSON::
+
+        {"http": {"method": "POST", "path": "/recorder/scene", "params": {"scene": "Terminal"}}}
+
+    Returns True on 2xx, False otherwise.  Never raises.
+    """
+    try:
+        import httpx
+    except ImportError:
+        logger.warning("httpx not installed — HTTP cue dispatch unavailable (pip install httpx)")
+        return False
+
+    base = _self_base_url(app)
+    url = base + path
+    try:
+        resp = httpx.request(method.upper(), url, params=params or {}, timeout=5.0)
+        logger.debug("HTTP cue → %s %s  status=%s", method.upper(), url, resp.status_code)
+        return resp.is_success
+    except Exception as exc:
+        logger.warning("HTTP cue dispatch to %s failed: %s", url, exc)
+        return False
 
 
 def _broadcast_osc(targets: list[dict], address: str, args: list) -> int:
@@ -78,7 +118,16 @@ def _broadcast_osc(targets: list[dict], address: str, args: list) -> int:
 
 
 def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
-    """Execute a cue: parse notes, broadcast OSC, write CueLog.
+    """Execute a cue: parse notes, dispatch OSC/HTTP actions, write CueLog.
+
+    Cue notes JSON schema::
+
+        {
+            "osc":  {"address": "/ardour/transport_play", "args": []},
+            "http": {"method": "POST", "path": "/recorder/scene", "params": {"scene": "Terminal"}}
+        }
+
+    Both keys are optional and independent — a cue can carry either, both, or neither.
 
     Returns a summary dict suitable for the API response.
     """
@@ -88,36 +137,50 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
     osc_address: str | None = None
     osc_args: list = []
     osc_sent = 0
+    http_ok: bool | None = None
 
-    # Parse OSC payload from cue notes (JSON)
     if cue.notes:
         try:
             data = json.loads(cue.notes)
-            osc_cfg = data.get("osc", {})
-            osc_address = osc_cfg.get("address")
-            osc_args = osc_cfg.get("args", [])
         except (json.JSONDecodeError, TypeError):
-            logger.debug("Cue %s notes are not JSON — no OSC dispatch", cue)
+            logger.debug("Cue %s notes are not JSON — no dispatch", cue)
+            data = {}
 
-    if osc_address and targets:
-        osc_sent = _broadcast_osc(targets, osc_address, osc_args)
-    elif osc_address and not targets:
-        logger.info("Cue %s has OSC payload but no targets configured", cue)
+        # OSC dispatch
+        osc_cfg = data.get("osc", {})
+        osc_address = osc_cfg.get("address")
+        osc_args = osc_cfg.get("args", [])
+        if osc_address and targets:
+            osc_sent = _broadcast_osc(targets, osc_address, osc_args)
+        elif osc_address and not targets:
+            logger.info("Cue %s has OSC payload but no targets configured", cue)
 
-    # Write CueLog
+        # HTTP dispatch (for endpoints like /recorder/scene that aren't OSC)
+        http_cfg = data.get("http", {})
+        if http_cfg:
+            http_ok = _dispatch_http(
+                app,
+                method=http_cfg.get("method", "POST"),
+                path=http_cfg.get("path", "/"),
+                params=http_cfg.get("params"),
+            )
+            status_str = "ok" if http_ok else "failed"
+            logger.info("HTTP cue %s → %s: %s", cue, http_cfg.get("path"), status_str)
+
+    # Write CueLog — store naive UTC so SQLite round-trip is consistent
     db = getattr(app, "db", None)
     if db is not None:
         log_entry = CueLog(
             show_id=show_id,
             cue_id=cue.id,
-            triggered_at=datetime.now(timezone.utc),
+            triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
             notes=json.dumps({"scene": cue.name, "osc_address": osc_address}),
         )
         with db.session() as session:
             session.add(log_entry)
             session.commit()
 
-    return {
+    result = {
         "cue": str(cue),
         "number": cue.number,
         "point": cue.point,
@@ -125,6 +188,9 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
         "osc_address": osc_address,
         "osc_targets_reached": osc_sent,
     }
+    if http_ok is not None:
+        result["http_ok"] = http_ok
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -238,13 +304,18 @@ async def go(
     show_id: int = Query(..., description="Show ID for CueLog"),
 ):
     """Advance to and fire the next cue in the loaded sequence."""
-    global _cue_pointer, _active_cues
+    global _cue_pointer, _active_cues, _active_cue_list_id
     from showrunner.plugins.programmer import _app_ref
     if _app_ref is None:
         raise HTTPException(status_code=503, detail="Plugin not yet started")
     db = getattr(_app_ref, "db", None)
     if db is None:
         raise HTTPException(status_code=503, detail="Database not available")
+
+    # Reset pointer when switching to a different cue list
+    if cue_list_id != _active_cue_list_id:
+        _cue_pointer = 0
+        _active_cue_list_id = cue_list_id
 
     # Reload cues if list changed or first call
     with db.session() as session:
@@ -314,10 +385,11 @@ class ShowProgrammerPlugin:
 
     @showrunner.hookimpl
     def showrunner_startup(self, app):
-        global _app_ref, _cue_pointer, _active_cues
+        global _app_ref, _cue_pointer, _active_cues, _active_cue_list_id
         _app_ref = app
         _cue_pointer = 0
         _active_cues = []
+        _active_cue_list_id = None
         cfg = _get_cfg(app)
         targets = cfg.get("osc-targets", [])
         logger.info("ShowProgrammer ready — %d OSC target(s) configured", len(targets))

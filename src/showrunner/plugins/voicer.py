@@ -123,9 +123,21 @@ def _get_cfg(app: Any) -> dict[str, Any]:
 
 def _output_dir(app: Any) -> Path:
     cfg = _get_cfg(app)
-    path = Path(cfg.get("output-dir", "./exports/narration"))
+    path = Path(cfg.get("output-dir", "./exports/narration")).resolve()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+_pipeline: Any = None
+
+
+def _get_pipeline() -> Any:
+    """Return a cached KPipeline instance (loads model weights on first call)."""
+    global _pipeline
+    if _pipeline is None:
+        from kokoro import KPipeline
+        _pipeline = KPipeline(lang_code="a")  # 'a' = American English
+    return _pipeline
 
 
 def generate_wav(text: str, voice: str, speed: float, out_path: Path) -> bool:
@@ -137,13 +149,13 @@ def generate_wav(text: str, voice: str, speed: float, out_path: Path) -> bool:
     try:
         import numpy as np
         import soundfile as sf
-        from kokoro import KPipeline
+        _get_pipeline()  # trigger ImportError early if kokoro missing
     except ImportError:
         logger.warning("kokoro / soundfile not installed — VO generation unavailable")
         return False
 
     try:
-        pipeline = KPipeline(lang_code="a")  # 'a' = American English
+        pipeline = _get_pipeline()
         chunks: list = []
         for _gs, _ps, audio in pipeline(text, voice=voice, speed=speed):
             chunks.append(audio)
@@ -165,12 +177,29 @@ def generate_wav(text: str, voice: str, speed: float, out_path: Path) -> bool:
 # Ardour session XML export
 # ---------------------------------------------------------------------------
 
+_ARDOUR_SAMPLE_RATE = 48000  # Ardour's internal sample rate
+_KOKORO_SAMPLE_RATE = 24000  # Kokoro TTS output sample rate
+
+
+def _wav_length_ardour_samples(path: Path) -> int:
+    """Return WAV duration in Ardour (48 kHz) samples.
+
+    Returns 0 if the file cannot be read (e.g. soundfile not installed).
+    """
+    try:
+        import soundfile as sf
+        info = sf.info(str(path))
+        return int(info.frames * (_ARDOUR_SAMPLE_RATE / info.samplerate))
+    except Exception:
+        return 0
+
+
 def _ardour_session_xml(wav_paths: list[Path], total_duration_ms: int = 62000) -> str:
     """Generate a minimal Ardour session XML with VO clips on one track.
 
     Positions clips evenly across the target duration — the engineer should
-    fine-tune before recording.  Ardour uses 48 kHz internally; offsets are
-    in samples at 24 kHz (Kokoro output) then scaled.
+    fine-tune before recording.  Offsets and lengths are in Ardour samples
+    (48 kHz).
     """
     sources = []
     regions = []
@@ -179,15 +208,18 @@ def _ardour_session_xml(wav_paths: list[Path], total_duration_ms: int = 62000) -
     for i, path in enumerate(wav_paths):
         src_id = 1000 + i
         reg_id = 2000 + i
-        # Rough position: evenly spaced across total duration
-        offset_samples = int((i / max(len(wav_paths), 1)) * total_duration_ms / 1000 * 24000)
+        # Rough position: evenly spaced across total duration at 48 kHz
+        offset_samples = int(
+            (i / max(len(wav_paths), 1)) * total_duration_ms / 1000 * _ARDOUR_SAMPLE_RATE
+        )
+        length_samples = _wav_length_ardour_samples(path)
         sources.append(
             f'  <Source name="{path.name}" channel="0" id="{src_id}" '
             f'type="audio" flags="Writable" />'
         )
         regions.append(
-            f'  <Region name="VO-{i+1}" start="0" length="0" position="{offset_samples}" '
-            f'id="{reg_id}" source-0="{src_id}" />'
+            f'  <Region name="VO-{i+1}" start="0" length="{length_samples}"'
+            f' position="{offset_samples}" id="{reg_id}" source-0="{src_id}" />'
         )
         clips.append(f'    <RegionView id="{reg_id}" />')
 
@@ -286,7 +318,18 @@ async def generate(
         )
 
     generated = [r for r in results if r["ok"]]
-    return {
+    failed = [r for r in results if not r["ok"]]
+
+    if len(generated) == 0 and len(results) > 0:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No audio generated (0/{len(results)} blocks succeeded). "
+                "Install kokoro and soundfile: uv sync --group av"
+            ),
+        )
+
+    response: dict = {
         "show_id": show_id,
         "script_id": script_id,
         "voice": voice,
@@ -294,6 +337,11 @@ async def generate(
         "total": len(results),
         "files": results,
     }
+    if failed:
+        response["warnings"] = [
+            f"Block {r['index']} ({r['page']}) failed" for r in failed
+        ]
+    return response
 
 
 @router.post("/preview")
@@ -343,7 +391,7 @@ async def list_files():
     out_dir = _output_dir(_app_ref)
     wavs = sorted(out_dir.glob("vo-*.wav"))
     return {
-        "directory": str(out_dir),
+        "directory": out_dir.as_posix(),
         "files": [f.name for f in wavs],
         "count": len(wavs),
     }

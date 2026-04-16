@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
     "fastapi>=0.135.2",
+    "httpx>=0.27",
     "nicegui>=2.0",
     "pluggy>=1.6.0",
     "screenplay-tools>=0.0.10",
@@ -31,6 +32,7 @@ av = [
     "python-osc>=1.8",     # ShowMixer + ShowProgrammer: OSC client
     "kokoro>=0.9",         # ShowVoicer: local neural TTS engine
     "soundfile>=0.12",     # ShowVoicer: WAV file output
+    "numpy>=1.24",         # ShowVoicer: audio array concatenation
 ]
 
 [tool.pytest.ini_options]

@@ -28,6 +28,7 @@ exports = "./exports"
 obs-host = "localhost"
 obs-port = 4455
 obs-password = ""        # set to match OBS WebSocket server password
+obs-output-dir = ""      # path where OBS saves recordings, used for MLT export (e.g. ~/Videos)
 
 # ---------------------------------------------------------------------------
 # ShowMixer — Ardour OSC transport control

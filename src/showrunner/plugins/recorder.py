@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -85,24 +86,54 @@ async def _obs_request(app: Any, request_type: str, request_data: dict | None = 
 # MLT XML generation
 # ---------------------------------------------------------------------------
 
-def _build_mlt_xml(logs: list[CueLog], recording_start: datetime | None) -> str:
-    """Generate a minimal Kdenlive-compatible MLT XML project.
+def _find_obs_recordings(output_dir: str) -> list[Path]:
+    """Return video files from the OBS output directory, sorted oldest-first."""
+    if not output_dir:
+        return []
+    p = Path(output_dir).expanduser()
+    if not p.is_dir():
+        return []
+    return sorted(
+        [f for f in p.iterdir() if f.suffix.lower() in (".mkv", ".mp4", ".mov")],
+        key=lambda f: f.stat().st_mtime,
+    )
 
-    Each CueLog entry whose notes contain ``"scene":`` is treated as a clip
-    boundary.  In/out points are derived from ``triggered_at`` offsets relative
-    to the first cue.  The caller must supply the actual video files separately
-    (MLT uses file paths that depend on the OBS output directory).
+
+def _naive_dt(dt: datetime) -> datetime:
+    """Strip tzinfo so naive/aware datetimes can be subtracted safely."""
+    return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
+
+
+def _build_mlt_xml(
+    logs: list[CueLog],
+    recording_start: datetime | None,
+    obs_output_dir: str = "",
+) -> str:
+    """Generate a Kdenlive-compatible MLT XML project.
+
+    Each CueLog entry is a clip boundary; in/out points come from
+    ``triggered_at`` offsets relative to the first log entry.
+
+    When ``obs_output_dir`` is set (via ``[plugins.recorder] obs-output-dir``),
+    OBS recording files are matched to ``<producer>`` elements so Kdenlive
+    loads media directly.  Without it, stub producers are emitted with a
+    ``<!-- TODO -->`` comment so the structure is valid but media must be
+    linked manually in Kdenlive.
     """
     if not logs:
         return '<mlt version="7.22.0"><playlist id="main_bin"/></mlt>'
 
-    base_time = recording_start or logs[0].triggered_at
+    base_time = (
+        _naive_dt(recording_start) if recording_start else _naive_dt(logs[0].triggered_at)
+    )
+    recordings = _find_obs_recordings(obs_output_dir)
+    producers: list[str] = []
     entries: list[str] = []
 
     for i, log in enumerate(logs):
         if log.triggered_at is None:
             continue
-        offset_ms = int((log.triggered_at - base_time).total_seconds() * 1000)
+        offset_ms = int((_naive_dt(log.triggered_at) - base_time).total_seconds() * 1000)
         duration_ms = log.duration_ms or 5000
         notes = log.notes or ""
         scene = "unknown"
@@ -113,14 +144,24 @@ def _build_mlt_xml(logs: list[CueLog], recording_start: datetime | None) -> str:
             if notes:
                 scene = notes
 
+        if i < len(recordings):
+            producers.append(f'  <producer id="clip_{i}" resource="{recordings[i].as_posix()}"/>')
+        else:
+            producers.append(
+                f'  <!-- TODO: set resource path for clip_{i} ({scene}) -->\n'
+                f'  <producer id="clip_{i}"/>'
+            )
+
         entries.append(
             f'  <entry in="{offset_ms}ms" out="{offset_ms + duration_ms}ms"'
             f' producer="clip_{i}" comment="{scene}"/>'
         )
 
+    producers_xml = "\n".join(producers)
     entries_xml = "\n".join(entries)
     return (
         '<mlt version="7.22.0">\n'
+        f"{producers_xml}\n"
         '  <playlist id="main_bin">\n'
         f"{entries_xml}\n"
         "  </playlist>\n"
@@ -138,10 +179,16 @@ async def index():
 
 
 @router.get("/status")
-async def status(request_app=None):
+async def status():
     """Check OBS connection and recording state."""
-    # request_app injected at startup — not available in standalone calls
-    return {"obs": "not_connected", "recording": False}
+    import showrunner.plugins.recorder as _self
+    app = _self._app_ref
+    if app is None:
+        return {"obs": "not_started", "recording": False}
+    result = await _obs_request(app, "GetRecordStatus")
+    if result is None:
+        return {"obs": "not_connected", "recording": False}
+    return {"obs": "connected", "recording": bool(result.get("outputActive", False))}
 
 
 @router.post("/scene")
@@ -165,7 +212,7 @@ async def control_record(action: str = Query(..., description="start or stop")):
         raise HTTPException(status_code=503, detail="Plugin not yet started")
     request_type = "StartRecord" if action == "start" else "StopRecord"
     result = await _obs_request(_app_ref, request_type)
-    if result is None and action == "start":
+    if result is None:
         raise HTTPException(status_code=502, detail="OBS unreachable or simpleobsws not installed")
     return {"action": action, "ok": True}
 
@@ -191,7 +238,9 @@ async def export_mlt(show_id: int = Query(..., description="Show ID to export"))
             .order_by(CueLog.triggered_at)
         ).all()
 
-    mlt = _build_mlt_xml(list(logs), None)
+    cfg = _get_cfg(_app_ref)
+    obs_output_dir = cfg.get("obs-output-dir", "")
+    mlt = _build_mlt_xml(list(logs), None, obs_output_dir=obs_output_dir)
     return {"show_id": show_id, "mlt": mlt}
 
 
