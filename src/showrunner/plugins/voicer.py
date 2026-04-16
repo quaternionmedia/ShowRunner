@@ -128,13 +128,66 @@ def _output_dir(app: Any) -> Path:
     return path
 
 
+# ---------------------------------------------------------------------------
+# Windows: espeak-ng auto-detection
+# ---------------------------------------------------------------------------
+
+_ESPEAK_WIN_CANDIDATES = [
+    r"C:\Program Files\eSpeak NG",
+    r"C:\Program Files (x86)\eSpeak NG",
+]
+
+
+def _configure_espeak_windows() -> bool:
+    """On Windows, locate espeak-ng and configure the environment for phonemizer.
+
+    Checks common install paths and the ``PHONEMIZER_ESPEAK_PATH`` /
+    ``ESPEAK_PATH`` env vars.  Adds the espeak-ng directory to ``PATH`` so
+    that ``libespeak-ng.dll`` is discoverable by the phonemizer C extension.
+
+    Returns ``True`` when espeak-ng is found or the platform is not Windows,
+    ``False`` when it cannot be located (caller should warn the user).
+    """
+    import os
+    import sys
+
+    if sys.platform != "win32":
+        return True
+
+    # Already configured via environment
+    if os.environ.get("PHONEMIZER_ESPEAK_PATH") or os.environ.get("ESPEAK_PATH"):
+        return True
+
+    for candidate_dir in _ESPEAK_WIN_CANDIDATES:
+        exe = Path(candidate_dir) / "espeak-ng.exe"
+        if exe.exists():
+            os.environ["PHONEMIZER_ESPEAK_PATH"] = str(exe)
+            # Prepend to PATH so libespeak-ng.dll is found by ctypes
+            if candidate_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = candidate_dir + os.pathsep + os.environ.get("PATH", "")
+            logger.info("espeak-ng auto-detected: %s", exe)
+            return True
+
+    logger.warning(
+        "espeak-ng not found on Windows — voice generation may fail.\n"
+        "Install from: https://github.com/espeak-ng/espeak-ng/releases\n"
+        "Or set PHONEMIZER_ESPEAK_PATH=C:\\path\\to\\espeak-ng.exe before starting ShowRunner."
+    )
+    return False
+
+
 _pipeline: Any = None
 
 
 def _get_pipeline() -> Any:
-    """Return a cached KPipeline instance (loads model weights on first call)."""
+    """Return a cached KPipeline instance (loads model weights on first call).
+
+    On Windows, espeak-ng is auto-detected and configured before the pipeline
+    is constructed so that phonemizer can find it.
+    """
     global _pipeline
     if _pipeline is None:
+        _configure_espeak_windows()
         from kokoro import KPipeline
         _pipeline = KPipeline(lang_code="a")  # 'a' = American English
     return _pipeline
