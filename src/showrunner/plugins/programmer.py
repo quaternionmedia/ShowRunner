@@ -352,6 +352,161 @@ async def reset():
 
 
 # ---------------------------------------------------------------------------
+# NiceGUI page
+# ---------------------------------------------------------------------------
+
+
+def _build_page() -> None:
+    """Register the /programmer NiceGUI page."""
+    from nicegui import app as nicegui_app
+    from nicegui import ui
+    from sqlmodel import select
+
+    from showrunner.models import Cue, CueList
+    from showrunner.plugins.db import get_db
+    from showrunner.ui import _current_show_id, header
+
+    def _load_cue_lists(show_id: int | None) -> dict[int, str]:
+        if show_id is None:
+            return {}
+        with get_db().session() as s:
+            lists = s.exec(
+                select(CueList).where(CueList.show_id == show_id).order_by(CueList.id)
+            ).all()
+            return {cl.id: cl.name for cl in lists}
+
+    def _load_cues(cue_list_id: int | None) -> list[Cue]:
+        if cue_list_id is None:
+            return []
+        with get_db().session() as s:
+            return list(
+                s.exec(
+                    select(Cue)
+                    .where(Cue.cue_list_id == cue_list_id)
+                    .order_by(Cue.number, Cue.point)
+                ).all()
+            )
+
+    @ui.page("/programmer")
+    async def programmer_page():
+        ui.dark_mode(True)
+        header()
+
+        show_id = _current_show_id()
+        cue_lists = _load_cue_lists(show_id)
+
+        stored = nicegui_app.storage.general.get("programmer_cue_list_id")
+        if stored in cue_lists:
+            initial_id = stored
+        elif cue_lists:
+            initial_id = next(iter(cue_lists))
+        else:
+            initial_id = None
+
+        state: dict[str, Any] = {"cue_list_id": initial_id}
+
+        with ui.column().classes("w-full max-w-3xl mx-auto mt-6 px-4 gap-4"):
+            ui.label("Programmer").classes("text-h5 font-bold")
+
+            feedback = ui.label("").classes("text-caption text-grey-5")
+
+            # Cue-list selector
+            with ui.row().classes("items-center gap-4 w-full"):
+                if cue_lists:
+                    def _on_list_change(e):
+                        state["cue_list_id"] = e.value
+                        nicegui_app.storage.general["programmer_cue_list_id"] = e.value
+                        cue_stack.refresh()
+
+                    ui.select(
+                        options=cue_lists,
+                        value=initial_id,
+                        label="Cue List",
+                        on_change=_on_list_change,
+                    ).classes("min-w-52")
+                else:
+                    ui.label("No cue lists — run: python examples/setup_intro.py").classes(
+                        "text-grey-5"
+                    )
+
+            # GO / RESET buttons
+            with ui.row().classes("gap-3 items-center"):
+
+                async def _on_go():
+                    if state["cue_list_id"] is None or show_id is None:
+                        feedback.set_text("Select a cue list first.")
+                        return
+                    try:
+                        result = await go(
+                            cue_list_id=state["cue_list_id"],
+                            show_id=show_id,
+                        )
+                        num = result.get("number", "?")
+                        point = result.get("point", 0)
+                        name = result.get("name", "?")
+                        num_str = f"{num}.{point}" if point else str(num)
+                        feedback.set_text(f"GO → {num_str}  {name}")
+                        feedback.classes(replace="text-caption text-green-5")
+                    except Exception as exc:
+                        detail = getattr(exc, "detail", str(exc))
+                        feedback.set_text(str(detail))
+                        feedback.classes(replace="text-caption text-red-5")
+                    cue_stack.refresh()
+
+                ui.button("GO", on_click=_on_go).props(
+                    "color=positive size=lg"
+                ).classes("px-10 text-weight-bold")
+
+                async def _on_reset():
+                    await reset()
+                    feedback.set_text("Reset to top.")
+                    feedback.classes(replace="text-caption text-grey-5")
+                    cue_stack.refresh()
+
+                ui.button("RESET", on_click=_on_reset).props("color=grey-7 size=md")
+
+            # Cue stack
+            @ui.refreshable
+            def cue_stack():
+                cues = _load_cues(state["cue_list_id"])
+                if not cues:
+                    ui.label("No cues in this list.").classes("text-grey-5 mt-4")
+                    return
+
+                # Determine next-to-fire index
+                pointer = (
+                    _cue_pointer
+                    if _active_cue_list_id == state["cue_list_id"]
+                    else 0
+                )
+
+                with ui.element("div").classes("w-full rounded border border-grey-8"):
+                    for i, cue in enumerate(cues):
+                        num_str = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+                        is_next = i == pointer
+                        is_fired = i < pointer
+
+                        row_bg = "background: #1b5e20;" if is_next else ""
+                        text_cls = "text-grey-6" if is_fired else ""
+
+                        with ui.row().classes(
+                            f"w-full px-3 py-1 items-center gap-3 {text_cls}"
+                        ).style(row_bg):
+                            ui.label(num_str).classes(
+                                "text-caption font-mono text-right"
+                            ).style("min-width: 3rem;")
+                            ui.label(cue.name or "").classes("flex-grow text-body2")
+                            if cue.layer:
+                                ui.badge(cue.layer).props("outline").classes(
+                                    "text-grey-5"
+                                )
+                            if is_next:
+                                ui.icon("play_arrow").classes("text-green-3")
+
+            cue_stack()
+
+
+# ---------------------------------------------------------------------------
 # Plugin class
 # ---------------------------------------------------------------------------
 
@@ -393,6 +548,7 @@ class ShowProgrammerPlugin:
         cfg = _get_cfg(app)
         targets = cfg.get("osc-targets", [])
         logger.info("ShowProgrammer ready — %d OSC target(s) configured", len(targets))
+        _build_page()
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):
@@ -409,7 +565,10 @@ class ShowProgrammerPlugin:
 
     @showrunner.hookimpl
     def showrunner_get_nav(self):
-        return None
+        return {
+            "label": "Programmer", "path": "/programmer",
+            "icon": "queue_play_next", "order": 30,
+        }
 
     @showrunner.hookimpl
     def showrunner_get_status(self):
