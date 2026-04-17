@@ -12,6 +12,10 @@ Show selector and control dashboard home page
 
 Script viewer (PDF, Fountain, etc.) with inline cue placement mounted at `/script`
 
+### **ShowPrinter**
+
+PDF export of scripts with cue annotations, mounted at `/export` (API-only)
+
 ### **ShowAdmin**
 
 Web-based database admin panel mounted at `/admin` _(requires install `admin` group)_
