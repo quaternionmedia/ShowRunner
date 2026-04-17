@@ -61,16 +61,17 @@ def _load_layout(override_path: str | None = None) -> dict[str, Any]:
     path = _DEFAULT_LAYOUT
 
     if override_path:
-        candidate = Path(override_path)
-        if not candidate.is_absolute():
-            candidate = safe_root / candidate
-
-        try:
-            resolved = candidate.resolve(strict=False)
-            resolved.relative_to(safe_root)
-            path = resolved
-        except ValueError:
-            path = _DEFAULT_LAYOUT
+        # Treat override as a filename only (no directory components).
+        # This prevents traversal/absolute path usage from untrusted input.
+        name = Path(override_path).name
+        if name and name not in {'.', '..'} and name.endswith('.toml'):
+            candidate = safe_root / name
+            try:
+                resolved = candidate.resolve(strict=False)
+                resolved.relative_to(safe_root)
+                path = resolved
+            except ValueError:
+                path = _DEFAULT_LAYOUT
 
     if not path.is_file():
         path = _DEFAULT_LAYOUT
