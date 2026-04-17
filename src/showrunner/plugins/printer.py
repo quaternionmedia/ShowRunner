@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import re
 from typing import Any
 
 import tomllib
@@ -67,17 +68,16 @@ def _load_layout(override_path: str | None = None) -> dict[str, Any]:
     path = _DEFAULT_LAYOUT
 
     if override_path:
-        # Treat override as a filename only (no directory components).
-        # This prevents traversal/absolute path usage from untrusted input.
+        # Accept only a simple TOML filename (no directory components).
+        # This prevents traversal, absolute paths, and path expression abuse.
         name = Path(override_path).name
-        if name and name not in {'.', '..'} and name.endswith('.toml'):
-            candidate = safe_root / name
-            try:
-                resolved = candidate.resolve(strict=False)
-                resolved.relative_to(safe_root)
-                path = resolved
-            except ValueError:
-                path = _DEFAULT_LAYOUT
+        if (
+            name
+            and name == override_path
+            and name not in {'.', '..'}
+            and re.fullmatch(r'[A-Za-z0-9_.-]+\.toml', name)
+        ):
+            path = safe_root / name
 
     if not path.is_file():
         path = _DEFAULT_LAYOUT
