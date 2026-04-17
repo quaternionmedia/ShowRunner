@@ -6,33 +6,58 @@ An application to help running live shows!
 
 **ShowRunner** is a collection of tools for live performances including script parsing, cue management, and more. It is built using Python and is designed to be flexible, extensible, and powerful for stage managers, designers, directors, and crew members involved in live productions.
 
+## Documentation
+
+Documentation can be found in the `docs/` directory, or available online: [quaternionmedia.github.io/ShowRunner/](https://quaternionmedia.github.io/ShowRunner/)
+
 ## Quick Start
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+### Install with pip
+
+```bash
+pip install showrunner[all]
+```
+
+The `[all]` extra includes optional dependencies for the admin panel, CLI, and other tools. You can also install just the core API with `pip install showrunner` and add extras as needed.
+
+### Install from source
+
+Requires [uv](https://docs.astral.sh/uv/)
+
+#### Clone the repo
 
 ```bash
 git clone https://github.com/quaternionmedia/ShowRunner.git
 cd ShowRunner
+```
 
-# Install the dependencies and dev tools
-uv sync
+#### Create a virtual environment (recommended)
 
-# Activate the virtual environment (optional, or run commands with `uv run [cmd]` if not activated)
+```bash
+uv venv
+# Activate the virtual environment:
 source .venv/bin/activate
+```
 
-# Start the API server
+If you are not using a virtual environment, run commands with `uv run [cmd]`
+
+#### Install dependencies
+
+Including dev tools and optional extras (admin panel, CLI, etc.)
+
+```bash
+uv sync --all-extras
+```
+
+## Start the API server
+
+```bash
 sr start
 ```
 
 Visit [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
 
-### Optional:
-
-Install optional admin panel:
-
-```bash
-uv sync --group admin
-```
+Use `sr --help` for CLI options and `sr [tool] --help` for tool-specific commands.
 
 ## Tools
 
@@ -49,15 +74,6 @@ uv sync --group admin
 - **ShowComms**: A communication tool for crew members to coordinate during a performance, including messaging and cue notifications
 - **ShowCmd**: A command-line interface to interact with the system with a CLI or TUI
 - **ShowRecorder**: A tool for archiving, annotating, and reviewing rehearsals and performances, including cue logs and performance notes
-
-## Documentation
-
-| Doc                                                             | Description                                    |
-| --------------------------------------------------------------- | ---------------------------------------------- |
-| [Getting Started](docs/getting-started.md)                      | Installation, first show, CLI reference        |
-| [Cookbook](docs/cookbook.md)                                    | Common tasks and code recipes                  |
-| [Plugin Load Demo](docs/plugin-load-demo.md)                    | Step-by-step plugin lifecycle walkthrough      |
-| [Plugin Architecture](docs/architecture/plugin-architecture.md) | Hook specs, ordering, shared state, deployment |
 
 ## Contributing
 

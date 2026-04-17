@@ -5,7 +5,9 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 
 from __future__ import annotations
 
+import inspect
 import logging
+from importlib.metadata import entry_points
 from pathlib import Path
 
 import pluggy
@@ -41,8 +43,21 @@ def get_plugin_manager(
             continue
         pm.register(plugin_class())
 
-    # Discover external plugins installed via setuptools entry points
-    pm.load_setuptools_entrypoints("showrunner")
+    # Discover external plugins installed via setuptools entry points.
+    # We load them manually (instead of pm.load_setuptools_entrypoints)
+    # so that entry points pointing to a class are instantiated first —
+    # pluggy requires hook methods to be bound (i.e. on an instance).
+    for ep in entry_points(group="showrunner"):
+        if pm.get_plugin(ep.name) is not None:
+            continue
+        plugin = ep.load()
+        if inspect.isclass(plugin):
+            plugin = plugin()
+        name = getattr(plugin, "__name__", type(plugin).__name__).lower()
+        if name in disabled:
+            logger.info("Skipping disabled external plugin %s", name)
+            continue
+        pm.register(plugin, name=ep.name)
 
     return pm
 
@@ -57,9 +72,18 @@ class ShowRunner:
     def __init__(self, config_path: Path | None = None) -> None:
         self.config = load_config(config_path)
         self._config_path = config_path or self.config._source_path
+
+        # Configure logging from show.toml unless already set by the CLI.
+        # basicConfig is a no-op when handlers already exist, so CLI
+        # flags (--log-level, --verbose, --quiet) take precedence.
+        logging.basicConfig(
+            level=self.config.logging.level.upper(),
+            format="%(levelname)-8s %(name)s: %(message)s",
+        )
+
         self.pm = get_plugin_manager(self.config)
         self._config_watcher: ConfigWatcher | None = None
-        self.api = FastAPI(title="ShowRunner", version="0.1.0")
+        self.api = FastAPI(title="ShowRunner", version="0.1.0", docs_url="/api")
         self._mount_routes()
 
     def _mount_routes(self) -> None:

@@ -1,6 +1,20 @@
 # Create a new plugin
 
-Create a package with this structure:
+## Quick start (CLI)
+
+The fastest way to create a plugin is with the built-in scaffolding command:
+
+```bash
+sr plugin create "My Plugin" -d "Does something useful"
+```
+
+This generates a complete package with the entry point pre-configured and
+installs it in editable mode. ShowRunner will discover it on the next
+`sr start`. See `sr plugin create --help` for all options.
+
+## Manual setup
+
+If you prefer to set things up by hand, create a package with this structure:
 
 ```bash
 my_plugin/
@@ -41,6 +55,9 @@ class MyPlugin:
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):
         print("MyPlugin stopped")
+
+
+plugin = MyPlugin()
 ```
 
 **`pyproject.toml`** – Register via setuptools entry points so ShowRunner discovers it automatically:
@@ -52,7 +69,7 @@ version = "0.1.0"
 dependencies = ["showrunner"]
 
 [project.entry-points."showrunner"]
-my_plugin = "my_plugin:MyPlugin"
+my_plugin = "my_plugin:plugin"
 ```
 
 Install it into the same environment:
