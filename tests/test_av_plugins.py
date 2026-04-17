@@ -703,3 +703,212 @@ def test_voicer_generate_503_when_kokoro_not_installed(tmp_path):
     assert "kokoro" in response.json()["detail"].lower()
 
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# ShowProgrammer — module-level timing globals
+# ---------------------------------------------------------------------------
+
+
+def test_go_sets_timing_globals(programmer_env):
+    """Firing a cue via GO must set _last_fire_at, _last_fire_name, _show_start_at."""
+    import showrunner.plugins.programmer as prog
+    from datetime import datetime
+
+    client, db, show_id, list_a, _ = programmer_env
+    # Ensure clean state
+    client.post("/programmer/reset")
+
+    assert prog._last_fire_at is None
+    assert prog._show_start_at is None
+
+    before = datetime.now()
+    client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
+    after = datetime.now()
+
+    assert prog._last_fire_at is not None
+    assert before <= prog._last_fire_at <= after, (
+        "_last_fire_at must be a naive local datetime close to now()"
+    )
+    # tzinfo must be None — a tz-aware datetime would cause a negative elapsed
+    # offset when subtracted from datetime.now() in a non-UTC timezone.
+    assert prog._last_fire_at.tzinfo is None
+    assert prog._last_fire_name.startswith("1")   # cue number 1
+    assert prog._show_start_at == prog._last_fire_at
+
+
+def test_show_start_not_overwritten_on_second_fire(programmer_env):
+    """_show_start_at is set only on the first GO; subsequent fires leave it alone."""
+    import showrunner.plugins.programmer as prog
+
+    client, db, show_id, list_a, _ = programmer_env
+    client.post("/programmer/reset")
+
+    client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
+    first_start = prog._show_start_at
+
+    client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
+    assert prog._show_start_at is first_start   # same object, not replaced
+
+
+def test_reset_clears_timing_globals(programmer_env):
+    """POST /programmer/reset must zero _last_fire_at, _last_fire_name, _show_start_at."""
+    import showrunner.plugins.programmer as prog
+
+    client, db, show_id, list_a, _ = programmer_env
+    client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
+    assert prog._last_fire_at is not None
+
+    client.post("/programmer/reset")
+
+    assert prog._last_fire_at is None
+    assert prog._last_fire_name == ""
+    assert prog._show_start_at is None
+
+
+# ---------------------------------------------------------------------------
+# ShowProgrammer — timing helpers (_fmt, _fmt_ms, _cue_durations_from_logs)
+# ---------------------------------------------------------------------------
+
+
+from showrunner.plugins.programmer import (
+    _cue_durations_from_logs,
+    _fmt,
+    _fmt_ms,
+)
+
+
+class _FakeLog:
+    """Minimal CueLog stand-in for unit-testing _cue_durations_from_logs."""
+
+    def __init__(self, cue_id, triggered_at, duration_ms=None):
+        from datetime import datetime, timezone
+        self.cue_id = cue_id
+        self.triggered_at = triggered_at
+        self.duration_ms = duration_ms
+
+
+# --- _fmt -------------------------------------------------------------------
+
+
+def test_fmt_zero():
+    assert _fmt(0) == "00:00"
+
+
+def test_fmt_under_one_hour():
+    assert _fmt(65) == "01:05"
+    assert _fmt(59) == "00:59"
+    assert _fmt(3599) == "59:59"
+
+
+def test_fmt_exactly_one_hour():
+    assert _fmt(3600) == "01:00:00"
+
+
+def test_fmt_over_one_hour():
+    assert _fmt(3661) == "01:01:01"
+    assert _fmt(7322) == "02:02:02"
+
+
+def test_fmt_fractional_seconds_truncated():
+    # Sub-second component should be dropped, not rounded
+    assert _fmt(1.9) == "00:01"
+    assert _fmt(3599.99) == "59:59"
+
+
+# --- _fmt_ms ----------------------------------------------------------------
+
+
+def test_fmt_ms_zero():
+    assert _fmt_ms(0) == "00:00.00"
+
+
+def test_fmt_ms_half_second():
+    assert _fmt_ms(0.5) == "00:00.50"
+
+
+def test_fmt_ms_whole_seconds():
+    assert _fmt_ms(65.0) == "01:05.00"
+
+
+def test_fmt_ms_centiseconds():
+    assert _fmt_ms(1.5) == "00:01.50"
+    assert _fmt_ms(65.25) == "01:05.25"
+
+
+def test_fmt_ms_over_one_hour():
+    assert _fmt_ms(3661.99) == "01:01:01.99"
+
+
+def test_fmt_ms_centiseconds_capped_at_99():
+    # Floating-point near-integers like 1.999… should not overflow to .100
+    result = _fmt_ms(1.9999)
+    assert result.endswith(".99") or result.endswith(".00"), result
+
+
+# --- _cue_durations_from_logs -----------------------------------------------
+
+
+def _make_logs(*entries):
+    """Build fake logs: each entry is (cue_id, seconds_offset, duration_ms=None)."""
+    from datetime import datetime, timedelta
+    base = datetime(2025, 1, 1, 12, 0, 0)
+    logs = []
+    for item in entries:
+        if len(item) == 2:
+            cue_id, offset = item
+            duration_ms = None
+        else:
+            cue_id, offset, duration_ms = item
+        logs.append(_FakeLog(cue_id, base + timedelta(seconds=offset), duration_ms))
+    return logs
+
+
+def test_cue_durations_empty():
+    assert _cue_durations_from_logs([]) == {}
+
+
+def test_cue_durations_single_entry():
+    # One entry: no next log, so duration unknown
+    logs = _make_logs((1, 0))
+    assert _cue_durations_from_logs(logs) == {}
+
+
+def test_cue_durations_two_entries_inferred():
+    logs = _make_logs((1, 0), (2, 5))
+    result = _cue_durations_from_logs(logs)
+    assert result[1] == 5000   # 5 s gap → 5000 ms
+    assert 2 not in result     # last entry has no duration yet
+
+
+def test_cue_durations_explicit_duration_ms_wins():
+    logs = _make_logs((1, 0, 1234), (2, 10))
+    result = _cue_durations_from_logs(logs)
+    assert result[1] == 1234   # explicit value used, not the 10 s gap
+
+
+def test_cue_durations_most_recent_firing_wins():
+    # Cue 1 fires twice; only the second duration should be returned
+    logs = _make_logs((1, 0), (2, 3), (1, 10), (2, 15))
+    result = _cue_durations_from_logs(logs)
+    assert result[1] == 5000   # second firing: 15 - 10 = 5 s
+    assert result[2] == 7000   # 10 - 3 = 7 s
+
+
+def test_cue_durations_skips_none_cue_id():
+    logs = _make_logs((None, 0), (1, 5))
+    result = _cue_durations_from_logs(logs)
+    assert None not in result
+    assert 1 not in result   # no entry after cue_id=1
+
+
+def test_cue_durations_skips_negative_delta():
+    # Timestamps out of order or equal → no negative durations stored
+    from datetime import datetime
+    base = datetime(2025, 1, 1, 12, 0, 0)
+    logs = [
+        _FakeLog(1, base),
+        _FakeLog(2, base),  # same time → delta = 0
+    ]
+    result = _cue_durations_from_logs(logs)
+    assert 1 not in result

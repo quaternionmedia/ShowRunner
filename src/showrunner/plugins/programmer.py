@@ -45,6 +45,12 @@ _cue_pointer: int = 0
 _active_cues: list[Cue] = []
 _active_cue_list_id: int | None = None
 
+# Timing state — module-level so REST calls and the UI page share the same
+# values.  All datetimes are naive UTC (consistent with CueLog.triggered_at).
+_last_fire_at: datetime | None = None   # wall-time of most-recent cue fire
+_last_fire_name: str = ""               # formatted label of that cue
+_show_start_at: datetime | None = None  # wall-time of first cue fire (session)
+
 
 def _get_cfg(app: Any) -> dict[str, Any]:
     """Return plugin settings from show.toml [plugins.programmer]."""
@@ -179,6 +185,17 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
         with db.session() as session:
             session.add(log_entry)
             session.commit()
+
+    # Update module-level timing state so the programmer page clock reflects
+    # every fire path (UI button, REST call, curl) without polling.
+    # Use naive *local* time so it matches datetime.now() in the UI _tick loop;
+    # UTC would shift elapsed time by the local UTC offset.
+    global _last_fire_at, _last_fire_name, _show_start_at
+    num_str = str(cue.number) + (f".{cue.point}" if cue.point else "")
+    _last_fire_at = datetime.now()
+    _last_fire_name = f"{num_str} — {cue.name or ''}"
+    if _show_start_at is None:
+        _show_start_at = _last_fire_at
 
     result = {
         "cue": str(cue),
@@ -345,10 +362,99 @@ async def go(
 
 @router.post("/reset")
 async def reset():
-    """Reset the cue pointer to the top of the list."""
-    global _cue_pointer
+    """Reset the cue pointer and all timing state to zero."""
+    global _cue_pointer, _last_fire_at, _last_fire_name, _show_start_at
     _cue_pointer = 0
+    _last_fire_at = None
+    _last_fire_name = ""
+    _show_start_at = None
     return {"pointer": 0}
+
+
+# ---------------------------------------------------------------------------
+# Timing helpers  (module-level so they are importable by tests)
+# ---------------------------------------------------------------------------
+
+
+def _fmt(seconds: float) -> str:
+    """Format elapsed seconds as ``HH:MM:SS`` or ``MM:SS`` (no sub-seconds).
+
+    Used for the wall clock and the SHOW elapsed timer where second-level
+    resolution is sufficient.
+
+    >>> _fmt(0)
+    '00:00'
+    >>> _fmt(65)
+    '01:05'
+    >>> _fmt(3661)
+    '01:01:01'
+    """
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+
+def _fmt_ms(seconds: float) -> str:
+    """Format elapsed seconds as ``[HH:]MM:SS.cc`` (centiseconds).
+
+    Used for the CUE elapsed timer and per-cue duration column where
+    sub-second resolution is useful for timing work.
+
+    >>> _fmt_ms(0)
+    '00:00.00'
+    >>> _fmt_ms(1.5)
+    '00:01.50'
+    >>> _fmt_ms(65.25)
+    '01:05.25'
+    >>> _fmt_ms(3661.99)
+    '01:01:01.99'
+    """
+    cs = min(int(round((seconds % 1) * 100)), 99)
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    prefix = f"{h:02d}:" if h else ""
+    return f"{prefix}{m:02d}:{sec:02d}.{cs:02d}"
+
+
+def _cue_durations_from_logs(logs: list) -> dict[int, int]:
+    """Compute ``{cue_id: duration_ms}`` from a time-ordered list of CueLog rows.
+
+    Duration is taken from ``CueLog.duration_ms`` when explicitly set,
+    otherwise inferred as the delta between consecutive log entries.  Only
+    the *most recent* firing of each cue is retained, so the dict reflects
+    the last known run-time for each cue.  The final log entry (the cue that
+    is still running) is intentionally omitted because its duration is not
+    yet known.
+
+    Args:
+        logs: CueLog instances sorted ascending by ``triggered_at``.
+
+    Returns:
+        Dict mapping cue_id to duration in milliseconds.  Empty when the
+        list is empty or contains only one entry.
+    """
+    durations: dict[int, int] = {}
+    for i in range(len(logs) - 1):
+        curr = logs[i]
+        nxt = logs[i + 1]
+        if curr.cue_id is None:
+            continue
+        if curr.duration_ms is not None:
+            durations[curr.cue_id] = curr.duration_ms
+        else:
+            # Strip tz so naive/aware timestamps subtract cleanly
+            t0 = curr.triggered_at.replace(tzinfo=None) if getattr(
+                curr.triggered_at, "tzinfo", None
+            ) else curr.triggered_at
+            t1 = nxt.triggered_at.replace(tzinfo=None) if getattr(
+                nxt.triggered_at, "tzinfo", None
+            ) else nxt.triggered_at
+            delta_ms = int((t1 - t0).total_seconds() * 1000)
+            if delta_ms > 0:
+                durations[curr.cue_id] = delta_ms
+    return durations
 
 
 # ---------------------------------------------------------------------------
@@ -357,12 +463,43 @@ async def reset():
 
 
 def _build_page() -> None:
-    """Register the /programmer NiceGUI page."""
+    """Register the /programmer NiceGUI page.
+
+    The page provides:
+    * Show + cue-list selectors (self-contained, no dependency on header state).
+    * A timing panel (top-right) with three rows:
+
+      =========  ===========================================================
+      TIME       Wall clock (HH:MM:SS).  Flashes green when a cue fires and
+                 fades back to grey over ~5 s.
+      SHOW       Elapsed time since the first GO in this browser session
+                 (resets on RESET).  Resolution: seconds.
+      CUE        Elapsed time since the most-recent GO.  Resolution:
+                 centiseconds (MM:SS.cc).  Amber after 5 s.
+      =========  ===========================================================
+
+    * A cue stack showing all cues for the selected list.  The most-recently
+      fired (in-flight) cue shows a live amber elapsed timer updated every
+      0.1 s.  Older fired cues are dimmed and annotated with their last-known
+      duration (MM:SS.cc) derived from CueLog timestamps.  The next-to-fire
+      cue is highlighted green with a play icon.
+    * GO / RESET buttons.
+
+    Implementation notes
+    --------------------
+    The timing panel reads three module-level globals (``_last_fire_at``,
+    ``_last_fire_name``, ``_show_start_at``) that are written by
+    :func:`_fire_cue` on every cue dispatch — whether the call originated from
+    the GO button, a REST ``POST /programmer/go``, or ``POST /programmer/cue``.
+    Both the write site and the read site (``_tick``) use **naive local time**
+    (``datetime.now()`` with no tzinfo) so elapsed-time subtraction is always
+    correct regardless of the server's UTC offset.
+    """
     from nicegui import app as nicegui_app
     from nicegui import ui
     from sqlmodel import select
 
-    from showrunner.models import Cue, CueList
+    from showrunner.models import Cue, CueList, CueLog
     from showrunner.plugins.db import get_db
     from showrunner.ui import header
 
@@ -396,10 +533,26 @@ def _build_page() -> None:
                 ).all()
             )
 
+    def _load_cue_durations(show_id: int | None) -> dict[int, int]:
+        """Return ``{cue_id: duration_ms}`` from recent CueLog entries."""
+        if show_id is None:
+            return {}
+        try:
+            with get_db().session() as s:
+                logs = list(
+                    s.exec(
+                        select(CueLog)
+                        .where(CueLog.show_id == show_id)
+                        .where(CueLog.cue_id.isnot(None))  # type: ignore[attr-defined]
+                        .order_by(CueLog.triggered_at)
+                    ).all()
+                )
+            return _cue_durations_from_logs(logs)
+        except Exception:
+            return {}
+
     @ui.page("/programmer")
     async def programmer_page():
-        from datetime import datetime as _dt
-
         ui.dark_mode(True)
         header()
 
@@ -424,48 +577,99 @@ def _build_page() -> None:
         state: dict[str, Any] = {
             "show_id": initial_show_id,
             "cue_list_id": initial_list_id,
-            "last_fire": None,   # datetime of most-recent GO
-            "last_name": "",     # name of last-fired cue
         }
+        # NiceGUI element reference for the in-flight cue's live timer label.
+        # Set inside cue_stack() on each refresh; read inside _tick().
+        refs: dict[str, Any] = {"inflight_lbl": None}
 
         with ui.column().classes("w-full max-w-3xl mx-auto mt-6 px-4 gap-4"):
-            # Title row + clock
-            with ui.row().classes("w-full items-center justify-between"):
+            # Title row + timing panel
+            with ui.row().classes("w-full items-start justify-between"):
                 ui.label("Programmer").classes("text-h5 font-bold")
 
-                with ui.column().classes("items-end gap-0"):
-                    clock_lbl = ui.label("").classes(
-                        "text-h4 font-mono tracking-widest text-grey-4"
-                    )
-                    fired_lbl = ui.label("").classes("text-caption text-grey-6 text-right")
+                # Right-side timing panel: wall clock + show elapsed + cue duration
+                with ui.element("div").classes(
+                    "rounded border border-grey-8 px-4 py-2"
+                ).style("min-width: 13rem;"):
+                    with ui.row().classes("items-center justify-between gap-4"):
+                        ui.label("TIME").classes("text-caption text-grey-6 font-mono")
+                        clock_lbl = ui.label("--:--:--").classes(
+                            "text-h5 font-mono tracking-widest text-grey-4"
+                        )
+                    with ui.row().classes("items-center justify-between gap-4"):
+                        ui.label("SHOW").classes("text-caption text-grey-6 font-mono")
+                        show_lbl = ui.label("--:--").classes(
+                            "text-body1 font-mono tracking-wide text-grey-6"
+                        )
+                    with ui.row().classes("items-center justify-between gap-4"):
+                        ui.label(" CUE").classes("text-caption text-grey-6 font-mono")
+                        cue_lbl = ui.label("--:--.--").classes(
+                            "text-body1 font-mono tracking-wide text-grey-6"
+                        )
+                    cue_name_lbl = ui.label("").classes(
+                        "text-caption text-grey-7 truncate w-full text-right"
+                    ).style("max-width: 13rem;")
 
-            # Tick every half-second: update clock + sync colour to last fire
+            # Tick every 0.1 s — reads module-level globals so every fire path
+            # (UI button, REST API, curl) drives the clock without polling.
             def _tick():
-                now = _dt.now()
+                from datetime import datetime as _local_dt
+                now = _local_dt.now()
                 clock_lbl.set_text(now.strftime("%H:%M:%S"))
-                t = state["last_fire"]
-                if t is None:
-                    clock_lbl.classes(replace="text-h4 font-mono tracking-widest text-grey-4")
-                    fired_lbl.set_text("")
-                    return
-                elapsed = (now - t).total_seconds()
-                if elapsed < 1.5:
-                    clock_lbl.classes(
-                        replace="text-h4 font-mono tracking-widest text-green-4"
+
+                cue_t = _last_fire_at   # module global, updated by _fire_cue
+                show_t = _show_start_at  # module global, set on first fire
+
+                # Wall-clock + CUE row
+                if cue_t is not None:
+                    cue_elapsed = (now - cue_t).total_seconds()
+                    if cue_elapsed < 1.5:
+                        clock_lbl.classes(
+                            replace="text-h5 font-mono tracking-widest text-green-4"
+                        )
+                    elif cue_elapsed < 5:
+                        clock_lbl.classes(
+                            replace="text-h5 font-mono tracking-widest text-green-7"
+                        )
+                    else:
+                        clock_lbl.classes(
+                            replace="text-h5 font-mono tracking-widest text-grey-4"
+                        )
+                    cue_lbl.set_text(_fmt_ms(cue_elapsed))
+                    cue_lbl.classes(
+                        replace="text-body1 font-mono tracking-wide "
+                        + ("text-green-5" if cue_elapsed < 5 else "text-amber-6")
                     )
-                elif elapsed < 5:
-                    clock_lbl.classes(
-                        replace="text-h4 font-mono tracking-widest text-green-7"
-                    )
+                    cue_name_lbl.set_text(_last_fire_name)
+                    # Live in-flight timer inside the cue stack row
+                    lbl = refs["inflight_lbl"]
+                    if lbl is not None:
+                        lbl.set_text(_fmt_ms(cue_elapsed))
                 else:
                     clock_lbl.classes(
-                        replace="text-h4 font-mono tracking-widest text-grey-4"
+                        replace="text-h5 font-mono tracking-widest text-grey-4"
                     )
-                fired_lbl.set_text(
-                    f"↳ {state['last_name']}  +{int(elapsed)}s"
-                )
+                    cue_lbl.set_text("--:--.--")
+                    cue_lbl.classes(
+                        replace="text-body1 font-mono tracking-wide text-grey-6"
+                    )
+                    cue_name_lbl.set_text("")
+                    refs["inflight_lbl"] = None
 
-            ui.timer(0.5, _tick)
+                # SHOW row
+                if show_t is not None:
+                    show_elapsed = (now - show_t).total_seconds()
+                    show_lbl.set_text(_fmt(show_elapsed))
+                    show_lbl.classes(
+                        replace="text-body1 font-mono tracking-wide text-grey-3"
+                    )
+                else:
+                    show_lbl.set_text("--:--")
+                    show_lbl.classes(
+                        replace="text-body1 font-mono tracking-wide text-grey-6"
+                    )
+
+            ui.timer(0.1, _tick)
 
             feedback = ui.label("").classes("text-caption text-grey-5")
 
@@ -530,8 +734,6 @@ def _build_page() -> None:
                         point = result.get("point", 0)
                         name = result.get("name", "?")
                         num_str = f"{num}.{point}" if point else str(num)
-                        state["last_fire"] = _dt.now()
-                        state["last_name"] = f"{num_str} — {name}"
                         feedback.set_text(f"GO → {num_str}  {name}")
                         feedback.classes(replace="text-caption text-green-5")
                     except Exception as exc:
@@ -546,8 +748,6 @@ def _build_page() -> None:
 
                 async def _on_reset():
                     await reset()
-                    state["last_fire"] = None
-                    state["last_name"] = ""
                     feedback.set_text("Reset to top.")
                     feedback.classes(replace="text-caption text-grey-5")
                     cue_stack.refresh()
@@ -568,11 +768,22 @@ def _build_page() -> None:
                     else 0
                 )
 
+                # Load last-known durations from CueLog for all fired cues
+                durations = _load_cue_durations(state["show_id"])
+
+                # Reset inflight reference before rebuilding rows — will be
+                # overwritten below if there is an in-flight cue this render.
+                refs["inflight_lbl"] = None
+
                 with ui.element("div").classes("w-full rounded border border-grey-8"):
                     for i, cue in enumerate(cues):
-                        num_str = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+                        num_str = (
+                            f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+                        )
                         is_next = i == pointer
                         is_fired = i < pointer
+                        # The most-recently fired cue is currently running.
+                        is_inflight = is_fired and (i == pointer - 1)
 
                         row_bg = "background: #1b5e20;" if is_next else ""
                         text_cls = "text-grey-6" if is_fired else ""
@@ -588,7 +799,18 @@ def _build_page() -> None:
                                 ui.badge(cue.layer).props("outline").classes(
                                     "text-grey-5"
                                 )
-                            if is_next:
+                            # In-flight cue: live timer driven by _tick every 0.1 s
+                            if is_inflight:
+                                lbl = ui.label("--:--.--").classes(
+                                    "text-caption font-mono text-amber-5"
+                                ).style("min-width: 5rem; text-align: right;")
+                                refs["inflight_lbl"] = lbl
+                            # Duration badge — shown for other fired cues when available
+                            elif is_fired and cue.id in durations:
+                                ui.label(_fmt_ms(durations[cue.id] / 1000)).classes(
+                                    "text-caption font-mono text-grey-7"
+                                ).style("min-width: 5rem; text-align: right;")
+                            elif is_next:
                                 ui.icon("play_arrow").classes("text-green-3")
 
             cue_stack()
@@ -629,10 +851,14 @@ class ShowProgrammerPlugin:
     @showrunner.hookimpl
     def showrunner_startup(self, app):
         global _app_ref, _cue_pointer, _active_cues, _active_cue_list_id
+        global _last_fire_at, _last_fire_name, _show_start_at
         _app_ref = app
         _cue_pointer = 0
         _active_cues = []
         _active_cue_list_id = None
+        _last_fire_at = None
+        _last_fire_name = ""
+        _show_start_at = None
         cfg = _get_cfg(app)
         targets = cfg.get("osc-targets", [])
         logger.info("ShowProgrammer ready — %d OSC target(s) configured", len(targets))
