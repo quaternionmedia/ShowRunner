@@ -77,7 +77,8 @@ def _load_layout(override_path: str | None = None) -> dict[str, Any]:
             and name not in {'.', '..'}
             and re.fullmatch(r'[A-Za-z0-9_.-]+\.toml', name)
         ):
-            path = safe_root / name
+            allowed_layouts = {p.name: p for p in safe_root.glob('*.toml') if p.is_file()}
+            path = allowed_layouts.get(name, _DEFAULT_LAYOUT)
 
     # Canonicalize and enforce containment within safe_root before file access.
     try:
