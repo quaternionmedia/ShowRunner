@@ -57,7 +57,21 @@ def _load_layout(override_path: str | None = None) -> dict[str, Any]:
     Falls back to the built-in ``pdf_layout.toml`` when *override_path* is
     ``None`` or the file does not exist.
     """
-    path = Path(override_path) if override_path else _DEFAULT_LAYOUT
+    safe_root = _DEFAULT_LAYOUT.parent.resolve()
+    path = _DEFAULT_LAYOUT
+
+    if override_path:
+        candidate = Path(override_path)
+        if not candidate.is_absolute():
+            candidate = safe_root / candidate
+
+        try:
+            resolved = candidate.resolve(strict=False)
+            resolved.relative_to(safe_root)
+            path = resolved
+        except ValueError:
+            path = _DEFAULT_LAYOUT
+
     if not path.is_file():
         path = _DEFAULT_LAYOUT
     with open(path, 'rb') as f:
