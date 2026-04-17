@@ -19,14 +19,20 @@ from typing import Any
 import tomllib
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from fpdf import FPDF
 from screenplay_tools.fountain.parser import Parser as FountainParser
 from screenplay_tools.screenplay import ElementType
 from sqlmodel import select
 
+
 import showrunner
 from showrunner.models import Cue, CueList, Script
 from showrunner.plugins.db import get_db
+
+try:
+    from fpdf import FPDF
+except ImportError:
+    print("Warning: fpdf2 is not installed. ShowPrinterPlugin will be unavailable.")
+    FPDF = None
 
 router = APIRouter(prefix='/export', tags=['ShowPrinter'])
 

@@ -1874,7 +1874,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
-    { name = "fpdf2" },
     { name = "nicegui" },
     { name = "pluggy" },
     { name = "screenplay-tools" },
@@ -1887,11 +1886,15 @@ admin = [
     { name = "sqladmin" },
 ]
 all = [
+    { name = "fpdf2" },
     { name = "sqladmin" },
     { name = "typer" },
 ]
 cli = [
     { name = "typer" },
+]
+pdf = [
+    { name = "fpdf2" },
 ]
 
 [package.dev-dependencies]
@@ -1908,18 +1911,19 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.135.2" },
-    { name = "fpdf2", specifier = ">=2.8.7" },
+    { name = "fpdf2", marker = "extra == 'pdf'", specifier = ">=2.8.7" },
     { name = "nicegui", specifier = ">=2.0" },
     { name = "pluggy", specifier = ">=1.6.0" },
     { name = "screenplay-tools", specifier = ">=0.0.10" },
     { name = "showrunner", extras = ["admin"], marker = "extra == 'all'" },
     { name = "showrunner", extras = ["cli"], marker = "extra == 'all'" },
+    { name = "showrunner", extras = ["pdf"], marker = "extra == 'all'" },
     { name = "sqladmin", marker = "extra == 'admin'", specifier = ">=0.20.1" },
     { name = "sqlmodel", specifier = ">=0.0.37" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.24.1" },
     { name = "watchfiles", specifier = ">=1.0.0" },
 ]
-provides-extras = ["admin", "cli", "all"]
+provides-extras = ["admin", "cli", "pdf", "all"]
 
 [package.metadata.requires-dev]
 dev = [
