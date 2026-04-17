@@ -79,9 +79,18 @@ def _load_layout(override_path: str | None = None) -> dict[str, Any]:
         ):
             path = safe_root / name
 
-    if not path.is_file():
-        path = _DEFAULT_LAYOUT
-    with open(path, 'rb') as f:
+    # Canonicalize and enforce containment within safe_root before file access.
+    try:
+        candidate = path.resolve()
+    except OSError:
+        candidate = _DEFAULT_LAYOUT
+
+    if candidate != safe_root and safe_root not in candidate.parents:
+        candidate = _DEFAULT_LAYOUT
+
+    if not candidate.is_file():
+        candidate = _DEFAULT_LAYOUT
+    with open(candidate, 'rb') as f:
         return tomllib.load(f)
 
 
