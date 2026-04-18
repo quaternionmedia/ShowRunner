@@ -1,0 +1,138 @@
+# PDF Export Layout Configuration
+#
+# This template controls how a script with cue annotations is rendered to PDF.
+# Distances are in millimeters (mm). Fonts must be built-in PDF fonts:
+#   Courier, Helvetica, Times (with -Bold, -Oblique, -BoldOblique variants).
+
+[page]
+width = 215.9        # US Letter
+height = 279.4
+margin-top = 25.4
+margin-bottom = 25.4
+margin-left = 25.4
+margin-right = 25.4
+
+[page.header]
+enabled = true
+font = "Helvetica"
+size = 8
+text = "{title} - {date} {time}" # Supports {title}, {page}, {date}, {time}
+
+[page.footer]
+enabled = true
+font = "Helvetica"
+size = 8
+text = "Page {page}"
+
+# -- Element styles -----------------------------------------------------------
+# Each element type maps to a Fountain ElementType. Available types:
+#   heading, action, character, dialogue, parenthetical,
+#   lyric, transition, section, synopsis
+
+[elements.heading]
+font = "Courier-Bold"
+size = 12
+uppercase = true
+align = "left"
+space-before = 18
+space-after = 12
+margin-left = 0
+margin-right = 0
+
+[elements.action]
+font = "Courier"
+size = 11
+align = "left"
+space-before = 12
+space-after = 0
+margin-left = 0
+margin-right = 0
+
+[elements.character]
+font = "Courier"
+size = 11
+uppercase = true
+align = "left"
+space-before = 12
+space-after = 0
+margin-left = 24
+margin-right = 0
+
+[elements.dialogue]
+font = "Courier"
+size = 11
+align = "left"
+space-before = 0
+space-after = 0
+margin-left = 12
+margin-right = 12
+
+[elements.parenthetical]
+font = "Courier"
+size = 11
+align = "left"
+space-before = 0
+space-after = 0
+margin-left = 36
+margin-right = 12
+
+[elements.lyric]
+font = "Courier-Oblique"
+size = 11
+align = "left"
+space-before = 0
+space-after = 0
+margin-left = 36
+margin-right = 12
+
+[elements.transition]
+font = "Courier"
+size = 12
+uppercase = true
+align = "right"
+space-before = 12
+space-after = 12
+margin-left = 0
+margin-right = 0
+
+[elements.section]
+font = "Courier-Bold"
+size = 14
+align = "left"
+space-before = 18
+space-after = 12
+margin-left = 0
+margin-right = 0
+
+[elements.synopsis]
+font = "Courier-Oblique"
+size = 10
+align = "left"
+space-before = 6
+space-after = 6
+margin-left = 0
+margin-right = 0
+
+# -- Cue annotation styles ----------------------------------------------------
+# Controls how cue markers appear in the right margin beside their script line.
+
+[cues]
+font = "Helvetica-Bold"
+size = 8
+name-font = "Helvetica"      # font for the cue name text
+name-size = 10
+max-width = 80               # max width (mm) for cue name column
+margin-right = 2             # distance from right page edge
+space-between = 2            # vertical gap between stacked cue badges
+border-width = 0.4           # border line width (mm); 0 to disable
+padding = 1.5                # inner padding (mm) between border and content
+background = [255, 255, 255] # background fill colour (R, G, B 0-255)
+background-opacity = 0.5     # background opacity (0.0 transparent – 1.0 opaque)
+
+# Per-layer colours (R, G, B 0-255)
+[cues.colors]
+Lights = [255, 165, 0] # orange
+Sound = [50, 100, 255] # blue
+Video = [160, 32, 240] # purple
+Audio = [0, 200, 200]  # cyan
+Stage = [0, 180, 0]    # green

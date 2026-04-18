@@ -1,7 +1,19 @@
+import logging
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
-import typer
+try:
+    import typer
+except ImportError:
+    print(
+        "Typer is required for the CLI. "
+        "Run: `uv sync --extra cli` or `pip install showrunner[cli]`",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
@@ -23,6 +35,41 @@ cli = Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     no_args_is_help=True,
 )
+
+
+@cli.callback()
+def main(
+    log_level: Optional[str] = Option(
+        None,
+        "--log-level",
+        "-L",
+        help="Set log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    ),
+    verbose: bool = Option(
+        False, "--verbose", "-v", help="Shorthand for --log-level DEBUG"
+    ),
+    quiet: bool = Option(
+        False, "--quiet", "-q", help="Shorthand for --log-level WARNING"
+    ),
+):
+    """ShowRunner CLI - Manage your live performance plugins and commands."""
+    if verbose and quiet:
+        console.print("[red]Cannot use --verbose and --quiet together.[/red]")
+        raise typer.Exit(1)
+
+    level = log_level.upper() if log_level else None
+    if verbose:
+        level = "DEBUG"
+    elif quiet:
+        level = "WARNING"
+
+    if level is not None:
+        logging.basicConfig(
+            level=level,
+            format="%(levelname)-8s %(name)s: %(message)s",
+            force=True,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Sub-app: shows
@@ -63,6 +110,16 @@ scripts_app = Typer(
     no_args_is_help=True,
 )
 cli.add_typer(scripts_app, name="scripts")
+
+# ---------------------------------------------------------------------------
+# Sub-app: plugin
+# ---------------------------------------------------------------------------
+
+plugin_app = Typer(
+    help="Manage ShowRunner plugins.",
+    no_args_is_help=True,
+)
+cli.add_typer(plugin_app, name="plugin")
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +190,7 @@ def start(
     console.print(f"  Dashboard:  http://{effective_host}:{effective_port}/")
     console.print(f"  Scripts:    http://{effective_host}:{effective_port}/script")
     console.print(f"  Admin:      http://{effective_host}:{effective_port}/admin")
-    console.print(f"  API docs:   http://{effective_host}:{effective_port}/docs")
+    console.print(f"  API docs:   http://{effective_host}:{effective_port}/api")
     try:
         uvicorn_run(show.api, host=effective_host, port=effective_port)
     except KeyboardInterrupt:
@@ -146,6 +203,15 @@ def start(
 @cli.command()
 def plugins():
     """List all loaded ShowRunner plugins."""
+    _plugin_list()
+
+
+# ---------------------------------------------------------------------------
+# Plugin sub-commands
+# ---------------------------------------------------------------------------
+
+
+def _plugin_list() -> None:
     app = ShowRunner()
     metadata = app.list_plugins()
 
@@ -160,6 +226,179 @@ def plugins():
         )
 
     console.print(table)
+
+
+_PLUGIN_INIT_TEMPLATE = '''\
+"""{{class_name}} - A ShowRunner plugin."""
+
+from fastapi import APIRouter
+
+import showrunner
+
+router = APIRouter(prefix="/{{slug}}", tags=["{{class_name}}"])
+
+
+@router.get("/")
+async def index():
+    return {"plugin": "{{class_name}}", "status": "ok"}
+
+
+class {{class_name}}:
+    """{{description}}"""
+
+    @showrunner.hookimpl
+    def showrunner_register(self):
+        return {
+            "name": "{{class_name}}",
+            "description": "{{description}}",
+            "version": "0.1.0",
+        }
+
+    @showrunner.hookimpl
+    def showrunner_startup(self, app):
+        pass
+
+    @showrunner.hookimpl
+    def showrunner_shutdown(self, app):
+        pass
+
+    @showrunner.hookimpl
+    def showrunner_get_routes(self):
+        return router
+
+    @showrunner.hookimpl
+    def showrunner_get_commands(self):
+        return []
+
+    @showrunner.hookimpl
+    def showrunner_get_nav(self):
+        return None
+
+    @showrunner.hookimpl
+    def showrunner_get_status(self):
+        return None
+
+
+plugin = {{class_name}}()
+'''
+
+_PLUGIN_PYPROJECT_TEMPLATE = """\
+[project]
+name = "{{package_name}}"
+version = "0.1.0"
+description = "{{description}}"
+requires-python = ">=3.10"
+dependencies = ["showrunner"]
+
+[project.entry-points."showrunner"]
+{{module_name}} = "{{module_name}}:plugin"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+"""
+
+
+def _slugify(name: str) -> str:
+    """Convert a name like 'My Plugin' to 'my-plugin'."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _to_module(slug: str) -> str:
+    """Convert 'my-plugin' to 'my_plugin'."""
+    return slug.replace("-", "_")
+
+
+def _to_class(slug: str) -> str:
+    """Convert 'my-plugin' to 'MyPlugin'."""
+    return "".join(part.capitalize() for part in slug.split("-"))
+
+
+def _render(template: str, **kwargs: str) -> str:
+    text = template
+    for key, value in kwargs.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
+
+
+@plugin_app.command("list")
+def plugin_list():
+    """List all loaded ShowRunner plugins."""
+    _plugin_list()
+
+
+@plugin_app.command("create")
+def plugin_create(
+    name: list[str] = Argument(..., help="Plugin name (e.g. 'My Plugin')"),
+    output_dir: Path = Option(
+        ".", "--output", "-o", help="Parent directory for the new plugin package"
+    ),
+    description: str = Option(
+        "A ShowRunner plugin.", "--description", "-d", help="Short description"
+    ),
+    install: bool = Option(
+        True, "--install/--no-install", help="Install the plugin in editable mode"
+    ),
+):
+    """Scaffold a new ShowRunner plugin package.
+
+    Creates a ready-to-use plugin directory with the entry point
+    pre-configured so ShowRunner discovers it automatically.
+    """
+    plugin_name = " ".join(name)
+    slug = _slugify(plugin_name)
+    module_name = _to_module(slug)
+    class_name = _to_class(slug)
+    package_name = slug
+
+    plugin_dir = output_dir.resolve() / package_name
+    src_dir = plugin_dir / module_name
+
+    if plugin_dir.exists():
+        console.print(f"[red]Directory already exists: {plugin_dir}[/red]")
+        raise typer.Exit(1)
+
+    src_dir.mkdir(parents=True)
+
+    init_content = _render(
+        _PLUGIN_INIT_TEMPLATE,
+        class_name=class_name,
+        slug=slug,
+        description=description,
+    )
+    (src_dir / "__init__.py").write_text(init_content, encoding="utf-8")
+
+    pyproject_content = _render(
+        _PLUGIN_PYPROJECT_TEMPLATE,
+        package_name=package_name,
+        module_name=module_name,
+        class_name=class_name,
+        description=description,
+    )
+    (plugin_dir / "pyproject.toml").write_text(pyproject_content, encoding="utf-8")
+
+    console.print(f"[green]Created[/green] plugin package at [bold]{plugin_dir}[/bold]")
+    console.print(f"  Module:     {module_name}")
+    console.print(f"  Class:      {class_name}")
+    console.print(f'  Entry point: {module_name} = "{module_name}:plugin"')
+
+    if install:
+        console.print("\n[dim]Installing in editable mode…[/dim]")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-e", str(plugin_dir)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            console.print(
+                f"[green]Installed[/green] [bold]{package_name}[/bold] – "
+                "it will load on the next [cyan]sr start[/cyan]"
+            )
+        else:
+            console.print(f"[yellow]pip install failed:[/yellow]\n{result.stderr}")
+            console.print(f"Install manually: [cyan]pip install -e {plugin_dir}[/cyan]")
+    else:
+        console.print(f"\nTo activate: [cyan]pip install -e {plugin_dir}[/cyan]")
 
 
 @cli.command("list")

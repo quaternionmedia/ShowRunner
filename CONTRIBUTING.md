@@ -76,7 +76,7 @@ Useful URLs once running:
 | ---------------------------- | ------------------------------------ |
 | http://localhost:8000        | Dashboard                            |
 | http://localhost:8000/script | Script viewer / cue editor           |
-| http://localhost:8000/docs   | Interactive OpenAPI docs             |
+| http://localhost:8000/api    | Interactive OpenAPI docs             |
 | http://localhost:8000/admin  | Admin panel _(requires admin group)_ |
 
 ---

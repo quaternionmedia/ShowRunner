@@ -28,6 +28,7 @@ nav = [
         "cookbook/shows.md",
         "cookbook/cues.md",
         "cookbook/scripts.md",
+        "cookbook/pdf-export.md",
         "cookbook/plugins.md",
         "cookbook/plugins-create.md",
         "cookbook/plugins-lifecycle.md",
