@@ -1,11 +1,10 @@
 """Tests for the ShowRunner plugin system."""
 
-
 import showrunner
 from showrunner.app import ShowRunner, get_plugin_manager
 from showrunner.plugins import get_builtin_plugins
 
-EXPECTED_PLUGIN_COUNT = 14
+EXPECTED_PLUGIN_COUNT = 15
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +80,7 @@ def test_showrunner_routes_include_db_prefix():
     """The ShowDB plugin mounts routes under /db."""
     runner = ShowRunner()
     paths = [r.path for r in runner.api.routes]
-    assert any('/db' in path for path in paths), (
-        f"Expected a /db route, got: {paths}"
-    )
+    assert any('/db' in path for path in paths), f"Expected a /db route, got: {paths}"
 
 
 def test_showrunner_api_is_fastapi_instance():

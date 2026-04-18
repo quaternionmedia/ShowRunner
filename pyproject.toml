@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.135.2",
     "nicegui>=2.0",
     "pluggy>=1.6.0",
+    "screenplay-tools>=0.0.10",
     "sqlmodel>=0.0.37",
     "watchfiles>=1.0.0",
 ]
@@ -18,7 +19,8 @@ sr = "showrunner.cli:cli"
 [project.optional-dependencies]
 admin = ["sqladmin>=0.20.1"]
 cli = ["typer>=0.24.1"]
-all = ["showrunner[admin]", "showrunner[cli]"]
+pdf = ["fpdf2>=2.8.7"]
+all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
