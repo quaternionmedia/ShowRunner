@@ -123,7 +123,7 @@ def _broadcast_osc(targets: list[dict], address: str, args: list) -> int:
     return sent
 
 
-def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
+async def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
     """Execute a cue: parse notes, dispatch OSC/HTTP actions, write CueLog.
 
     Cue notes JSON schema::
@@ -135,8 +135,25 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
 
     Both keys are optional and independent — a cue can carry either, both, or neither.
 
+    Timing globals are updated **before** any I/O so the programmer page clock
+    starts within one 0.1 s tick of the button press regardless of how long
+    the downstream dispatch takes.  HTTP dispatch runs in a thread pool so the
+    async event loop (and the UI) stay responsive during the round-trip.
+
     Returns a summary dict suitable for the API response.
     """
+    import asyncio
+
+    # Timing globals first — clock starts the instant _fire_cue is entered,
+    # before network I/O.  Both write site and the _tick read site use naive
+    # local time (datetime.now()) so elapsed subtraction is always correct.
+    global _last_fire_at, _last_fire_name, _show_start_at
+    num_str = str(cue.number) + (f".{cue.point}" if cue.point else "")
+    _last_fire_at = datetime.now()
+    _last_fire_name = f"{num_str} — {cue.name or ''}"
+    if _show_start_at is None:
+        _show_start_at = _last_fire_at
+
     cfg = _get_cfg(app)
     targets: list[dict] = cfg.get("osc-targets", _DEFAULT_OSC_TARGETS)
 
@@ -152,7 +169,7 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
             logger.debug("Cue %s notes are not JSON — no dispatch", cue)
             data = {}
 
-        # OSC dispatch
+        # OSC dispatch (UDP — fire-and-forget, inherently non-blocking)
         osc_cfg = data.get("osc", {})
         osc_address = osc_cfg.get("address")
         osc_args = osc_cfg.get("args", [])
@@ -161,10 +178,12 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
         elif osc_address and not targets:
             logger.info("Cue %s has OSC payload but no targets configured", cue)
 
-        # HTTP dispatch (for endpoints like /recorder/scene that aren't OSC)
+        # HTTP dispatch — run in a thread so the event loop stays responsive
+        # during the round-trip (e.g. OBS WebSocket via ShowRecorder).
         http_cfg = data.get("http", {})
         if http_cfg:
-            http_ok = _dispatch_http(
+            http_ok = await asyncio.to_thread(
+                _dispatch_http,
                 app,
                 method=http_cfg.get("method", "POST"),
                 path=http_cfg.get("path", "/"),
@@ -185,17 +204,6 @@ def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
         with db.session() as session:
             session.add(log_entry)
             session.commit()
-
-    # Update module-level timing state so the programmer page clock reflects
-    # every fire path (UI button, REST call, curl) without polling.
-    # Use naive *local* time so it matches datetime.now() in the UI _tick loop;
-    # UTC would shift elapsed time by the local UTC offset.
-    global _last_fire_at, _last_fire_name, _show_start_at
-    num_str = str(cue.number) + (f".{cue.point}" if cue.point else "")
-    _last_fire_at = datetime.now()
-    _last_fire_name = f"{num_str} — {cue.name or ''}"
-    if _show_start_at is None:
-        _show_start_at = _last_fire_at
 
     result = {
         "cue": str(cue),
@@ -311,7 +319,7 @@ async def fire_by_number(
         # Detach from session before passing to _fire_cue
         session.expunge(cue)
 
-    result = _fire_cue(_app_ref, cue, show_id)
+    result = await _fire_cue(_app_ref, cue, show_id)
     return result
 
 
@@ -354,7 +362,7 @@ async def go(
         raise HTTPException(status_code=409, detail="Past end of cue list — reset to continue")
 
     cue = _active_cues[_cue_pointer]
-    result = _fire_cue(_app_ref, cue, show_id)
+    result = await _fire_cue(_app_ref, cue, show_id)
     _cue_pointer += 1
     result["pointer"] = _cue_pointer
     return result
@@ -725,6 +733,7 @@ def _build_page() -> None:
                     if state["cue_list_id"] is None or state["show_id"] is None:
                         feedback.set_text("Select a show and cue list first.")
                         return
+                    go_btn.disable()
                     try:
                         result = await go(
                             cue_list_id=state["cue_list_id"],
@@ -740,11 +749,22 @@ def _build_page() -> None:
                         detail = getattr(exc, "detail", str(exc))
                         feedback.set_text(str(detail))
                         feedback.classes(replace="text-caption text-red-5")
+                    finally:
+                        go_btn.enable()
                     cue_stack.refresh()
 
-                ui.button("GO", on_click=_on_go).props(
+                go_btn = ui.button("GO", on_click=_on_go).props(
                     "color=positive size=lg"
                 ).classes("px-10 text-weight-bold")
+
+                # Space bar fires GO — standard in theatrical cue software.
+                # NiceGUI's ui.keyboard ignores keypresses when an input or
+                # select element is focused, preventing accidental fires.
+                async def _on_key(e):
+                    if e.key == " " and e.action.keydown and not e.action.repeat:
+                        await _on_go()
+
+                ui.keyboard(on_key=_on_key)
 
                 async def _on_reset():
                     await reset()
