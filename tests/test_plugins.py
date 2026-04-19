@@ -4,7 +4,7 @@ import showrunner
 from showrunner.app import ShowRunner, get_plugin_manager
 from showrunner.plugins import get_builtin_plugins
 
-EXPECTED_PLUGIN_COUNT = 15
+EXPECTED_PLUGIN_COUNT = 16
 
 
 # ---------------------------------------------------------------------------
