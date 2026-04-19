@@ -22,9 +22,9 @@ import showrunner
 from showrunner.plugin import ShowRunnerPlugin
 
 _DEFAULT_FORMAT = (
-    '{time:YYYY-MM-DD HH:mm:ss} | '
+    '{time:YYYY-MM-DD HH:mm:ss.SSS} | '
     '<level>{level: <8}</level> | '
-    '<cyan>{name}</cyan> - '
+    '<cyan>{name}</cyan> | '
     '<yellow>{message}</yellow>'
 )
 
@@ -49,6 +49,7 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
 
     @showrunner.hookimpl
     def showrunner_register(self) -> dict:
+        logger.trace('showrunner_register called')
         return {
             'name': 'ShowLogger',
             'description': 'Structured event logging for all ShowRunner plugin events',
@@ -61,6 +62,7 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
 
     @showrunner.hookimpl
     def showrunner_startup(self, app) -> None:
+        logger.trace('showrunner_startup called')
         super().showrunner_startup(app)
         cfg = app.config.plugins.settings.get('showlogger', {})
         self._configure(cfg)
@@ -68,6 +70,7 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app) -> None:
+        logger.trace('showrunner_shutdown called')
         logger.info('ShowLogger shutting down')
         self._remove_sinks()
         super().showrunner_shutdown(app)
@@ -84,12 +87,18 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
     def showrunner_command(self, command_name: str, data: dict | None) -> None:
         logger.info('command | {} | {}', command_name, data)
 
+    # showrunner_query
+    @showrunner.hookimpl
+    def showrunner_query(self, query_name: str, **kwargs):
+        logger.trace('query | {} | {}', query_name, kwargs)
+
     # ------------------------------------------------------------------
     # Live config reload
     # ------------------------------------------------------------------
 
     @showrunner.hookimpl
     def showrunner_config_changed(self, config, previous_config) -> None:
+        logger.trace('showrunner_config_changed called')
         cfg = config.plugins.settings.get('showlogger', {})
         self._configure(cfg)
         logger.info('ShowLogger reconfigured')
@@ -100,18 +109,22 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
 
     @showrunner.hookimpl
     def showrunner_get_routes(self):
+        logger.trace('showrunner_get_routes called')
         return None
 
     @showrunner.hookimpl
     def showrunner_get_commands(self) -> list:
+        logger.trace('showrunner_get_commands called')
         return []
 
     @showrunner.hookimpl
     def showrunner_get_nav(self):
+        logger.trace('showrunner_get_nav called')
         return None
 
     @showrunner.hookimpl
     def showrunner_get_status(self):
+        logger.trace('showrunner_get_status called')
         return None
 
     # ------------------------------------------------------------------
@@ -153,6 +166,7 @@ class ShowLoggerPlugin(ShowRunnerPlugin):
                 rotation=rotation,
                 retention=retention,
                 encoding='utf-8',
+                format=cfg.get('file_format', fmt),
             )
             self._sink_ids.append(sid)
             logger.debug('ShowLogger file sink: {}', file_path)

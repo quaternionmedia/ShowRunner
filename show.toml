@@ -21,6 +21,18 @@ current-show = 1
 # disabled = []
 
 # Per-plugin settings use [plugins.<name>] sections:
+
+[plugins.showlogger]
+level = "INFO"
+# format = "..."       # custom loguru format string (optional)
+
+# File sink settings
+file = "show.log"      # enable file sink (omit to disable)
+file_level = "DEBUG"   # file sink level
+file_format = "{time} | {level: <8} | {name} | {message}" # custom loguru file format string (optional)
+# rotation = "10 MB"   # file rotation threshold
+# retention = "1 week" # rotated file retention
+
 # [plugins.lighter]
 # console-ip = "192.168.1.100"
 #
