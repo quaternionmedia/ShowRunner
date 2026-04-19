@@ -47,11 +47,11 @@ class ShowRunnerSpec:
         """
 
     @hookspec
-    def showrunner_command(self, command_name: str, **kwargs):
+    def showrunner_command(self, command_name: str, data: dict | None):
         """Receive commands issued by the ShowRunner system.
 
         :param command_name: Name of the command (e.g. "start_cue", "stop_cue")
-        :param kwargs: Additional command data
+        :param data: Optional dict of additional command data
         """
 
     @hookspec
@@ -74,11 +74,11 @@ class ShowRunnerSpec:
         """
 
     @hookspec
-    def showrunner_event(self, event_name: str, **kwargs):
+    def showrunner_event(self, event_name: str, data: dict | None):
         """Receive events emitted by the ShowRunner system.
 
         :param event_name: Name of the event (e.g. "cue_started", "cue_completed")
-        :param kwargs: Additional event data
+        :param data: Optional dict of additional event data
         """
 
     @hookspec

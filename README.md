@@ -61,19 +61,20 @@ Use `sr --help` for CLI options and `sr [tool] --help` for tool-specific command
 
 ## Tools
 
-- **ShowDashboard**: Show selector and control dashboard mounted at [/](http://localhost:8000/)
-- **ShowScripter**: Script viewer (PDF, Fountain, etc.) with inline cue placement mounted at [/script](http://localhost:8000/script)
 - **ShowAdmin**: Web-based database admin panel mounted at [/admin](http://localhost:8000/admin) _(requires `admin` group)_
-- **ShowDesigner**: Allows users to design cues based on the parsed script, including setting up cue layers for specific integration with other tools
-- **ShowProgrammer**: Synchronization with QLab and other tools to automatically create and label cues from a script
-- **ShowMixer**: Operates sound mixers to monitor and control channels and effects during a performance (Behringer, Allen & Heath, etc.)
-- **ShowLighter**: Integrates cues directly with lighting control systems for design and performance (ETC Eos, Chamsys, MA Lighting, etc.)
-- **ShowManager**: Designed for Stage Managers to manage cues during a live performance, including triggering cues
-- **ShowStopper**: A stopwatch with helpful features for live performances, such as logging and cue timing
-- **ShowPrompter**: A teleprompter application that can display scripts and cues for performers and crew
-- **ShowComms**: A communication tool for crew members to coordinate during a performance, including messaging and cue notifications
 - **ShowCmd**: A command-line interface to interact with the system with a CLI or TUI
+- **ShowComms**: A communication tool for crew members to coordinate during a performance, including messaging and cue notifications
+- **ShowDashboard**: Show selector and control dashboard mounted at [/](http://localhost:8000/)
+- **ShowDesigner**: Allows users to design cues based on the parsed script, including setting up cue layers for specific integration with other tools
+- **ShowLighter**: Integrates cues directly with lighting control systems for design and performance (ETC Eos, Chamsys, MA Lighting, etc.)
+- **ShowLogger**: Logs all events and commands in the system to a file and/or stdout for debugging and archival purposes
+- **ShowManager**: Designed for Stage Managers to manage cues during a live performance, including triggering cues
+- **ShowMixer**: Operates sound mixers to monitor and control channels and effects during a performance (Behringer, Allen & Heath, etc.)
+- **ShowProgrammer**: Synchronization with QLab and other tools to automatically create and label cues from a script
+- **ShowPrompter**: A teleprompter application that can display scripts and cues for performers and crew
 - **ShowRecorder**: A tool for archiving, annotating, and reviewing rehearsals and performances, including cue logs and performance notes
+- **ShowScripter**: Script viewer (PDF, Fountain, etc.) with inline cue placement mounted at [/script](http://localhost:8000/script)
+- **ShowStopper**: A stopwatch with helpful features for live performances, such as logging and cue timing
 
 ## Contributing
 

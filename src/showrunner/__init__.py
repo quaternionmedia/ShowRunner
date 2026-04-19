@@ -8,5 +8,6 @@ hookimpl = pluggy.HookimplMarker("showrunner")
 """Marker to be used in plugin hook implementations."""
 
 from .app import ShowRunner  # noqa: E402
+from .plugin import ShowRunnerPlugin  # noqa: E402
 
-__all__ = ["hookimpl", "ShowRunner"]
+__all__ = ["hookimpl", "ShowRunner", "ShowRunnerPlugin"]

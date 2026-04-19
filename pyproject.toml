@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
     "fastapi>=0.135.2",
+    "loguru>=0.7.3",
     "nicegui>=2.0",
     "pluggy>=1.6.0",
     "screenplay-tools>=0.0.10",
