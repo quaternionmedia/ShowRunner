@@ -15,14 +15,50 @@ current-show = 1
 
 [paths]
 # scripts = "./scripts"
-# exports = "./exports"
+exports = "./exports"
 
 [plugins]
 # disabled = []
 
-# Per-plugin settings use [plugins.<name>] sections:
+# ---------------------------------------------------------------------------
+# ShowRecorder — OBS websocket v5 screen recording control
+# Enable in OBS: Tools → WebSocket Server Settings → Enable WebSocket server
+# ---------------------------------------------------------------------------
+[plugins.recorder]
+obs-host = "localhost"
+obs-port = 4455
+obs-password = ""        # set to match OBS WebSocket server password
+obs-output-dir = ""      # path where OBS saves recordings, used for MLT export (e.g. ~/Videos)
+
+# ---------------------------------------------------------------------------
+# ShowMixer — Ardour OSC transport control
+# Enable in Ardour: Edit → Preferences → Control Surfaces → OSC → Enable
+# ---------------------------------------------------------------------------
+[plugins.mixer]
+ardour-host = "localhost"
+ardour-osc-port = 3819
+
+# ---------------------------------------------------------------------------
+# ShowProgrammer — OSC cue dispatcher (QLab equivalent)
+# Lists every OSC target that cues will broadcast to when fired.
+# ---------------------------------------------------------------------------
+[plugins.programmer]
+osc-targets = [
+  { host = "localhost", port = 3819 },   # Ardour
+]
+
+# ---------------------------------------------------------------------------
+# ShowVoicer — Kokoro TTS voice-over generation
+# Voices: af_heart, af_bella, am_adam, bf_emma (British), etc.
+# Model weights (~300 MB) download automatically on first use.
+# ---------------------------------------------------------------------------
+[plugins.voicer]
+voice = "af_heart"
+speed = 1.0
+output-dir = "./exports/narration"
+
+# ---------------------------------------------------------------------------
+# ShowLighter — lighting console integration (example)
+# ---------------------------------------------------------------------------
 # [plugins.lighter]
 # console-ip = "192.168.1.100"
-#
-# [plugins.mixer]
-# osc-port = 53000
