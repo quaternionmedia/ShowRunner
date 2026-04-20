@@ -1,4 +1,4 @@
-import logging
+from loguru import logger
 import re
 import subprocess
 import sys
@@ -62,12 +62,12 @@ def main(
         level = "DEBUG"
     elif quiet:
         level = "WARNING"
-
+    logger.remove()
     if level is not None:
-        logging.basicConfig(
+        logger.add(
+            sink=sys.stderr,
             level=level,
-            format="%(levelname)-8s %(name)s: %(message)s",
-            force=True,
+            format="{time:YYYY-MM-DD HH:mm:ss} | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         )
 
 

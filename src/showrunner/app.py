@@ -5,7 +5,7 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 
 from __future__ import annotations
 
-import logging
+from loguru import logger
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -28,14 +28,6 @@ class ShowRunner:
     def __init__(self, config_path: Path | None = None) -> None:
         self.config = load_config(config_path)
         self._config_path = config_path or self.config._source_path
-
-        # Configure logging from show.toml unless already set by the CLI.
-        # basicConfig is a no-op when handlers already exist, so CLI
-        # flags (--log-level, --verbose, --quiet) take precedence.
-        logging.basicConfig(
-            level=self.config.logging.level.upper(),
-            format="%(levelname)-8s %(name)s: %(message)s",
-        )
 
         self.pm = get_plugin_manager(self.config)
         self._config_watcher: ConfigWatcher | None = None

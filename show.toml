@@ -18,7 +18,7 @@ current-show = 1
 # exports = "./exports"
 
 [plugins]
-# disabled = []
+# disabled = [] # list of plugin names to disable
 
 # Per-plugin settings use [plugins.<name>] sections:
 
