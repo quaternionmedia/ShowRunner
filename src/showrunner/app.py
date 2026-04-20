@@ -5,61 +5,17 @@ Manages the plugin lifecycle and wires plugins into the FastAPI application.
 
 from __future__ import annotations
 
-import inspect
 import logging
-from importlib.metadata import entry_points
 from pathlib import Path
 
-import pluggy
 from fastapi import FastAPI
 
-from . import plugins
-from .config import ConfigWatcher, ShowRunnerConfig, load_config
-from .hookspecs import ShowRunnerSpec
-
-logger = logging.getLogger(__name__)
-
-
-def get_plugin_manager(
-    config: ShowRunnerConfig | None = None,
-) -> pluggy.PluginManager:
-    """Create and configure a PluginManager with built-in plugins loaded.
-
-    Plugins whose name (case-insensitive) appears in
-    ``config.plugins.disabled`` are skipped.
-    """
-    pm = pluggy.PluginManager("showrunner")
-    pm.add_hookspecs(ShowRunnerSpec)
-
-    disabled = set()
-    if config is not None:
-        disabled = {n.lower() for n in config.plugins.disabled}
-
-    # Register all built-in plugins
-    for plugin_class in plugins.get_builtin_plugins():
-        name = plugin_class.__name__.lower()
-        if name in disabled:
-            logger.info("Skipping disabled plugin %s", plugin_class.__name__)
-            continue
-        pm.register(plugin_class())
-
-    # Discover external plugins installed via setuptools entry points.
-    # We load them manually (instead of pm.load_setuptools_entrypoints)
-    # so that entry points pointing to a class are instantiated first —
-    # pluggy requires hook methods to be bound (i.e. on an instance).
-    for ep in entry_points(group="showrunner"):
-        if pm.get_plugin(ep.name) is not None:
-            continue
-        plugin = ep.load()
-        if inspect.isclass(plugin):
-            plugin = plugin()
-        name = getattr(plugin, "__name__", type(plugin).__name__).lower()
-        if name in disabled:
-            logger.info("Skipping disabled external plugin %s", name)
-            continue
-        pm.register(plugin, name=ep.name)
-
-    return pm
+from .config import ConfigWatcher, load_config
+from .utils import get_plugin_manager
+from loguru import logger
+from time import time
+from random import choices
+import string
 
 
 class ShowRunner:
@@ -127,6 +83,22 @@ def _create_app() -> FastAPI:
     Used as the ASGI entry point for ``uvicorn showrunner.app:app --reload``.
     """
     show = ShowRunner()
+
+    @show.api.middleware("http")
+    async def log_requests(request: Request, call_next):
+        idem = ''.join(choices(string.ascii_uppercase + string.digits, k=6))
+        logger.trace(f"rid={idem} start request path={request.url.path}")
+        start_time = time()
+
+        response = await call_next(request)
+
+        process_time = (time() - start_time) * 1000
+        logger.trace(
+            f"rid={idem} completed_in={process_time:.3f}ms status_code={response.status_code}"
+        )
+
+        return response
+
     show.startup()
     return show.api
 
