@@ -68,6 +68,7 @@ show.db
 .Trashes
 ehthumbs.db
 Thumbs.db
+*.pdf
 
 # NiceGUI local storage
 .nicegui/

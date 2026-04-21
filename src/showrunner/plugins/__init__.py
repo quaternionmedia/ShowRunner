@@ -1,5 +1,6 @@
 """Built-in ShowRunner plugins."""
 
+from .logger import ShowLoggerPlugin
 from .scripter import ShowScripterPlugin
 from .printer import ShowPrinterPlugin
 from .designer import ShowDesignerPlugin
@@ -20,6 +21,7 @@ from .dashboard import ShowDashboardPlugin
 def get_builtin_plugins() -> list[type]:
     """Return all built-in plugin classes."""
     return [
+        ShowLoggerPlugin,
         ShowScripterPlugin,
         ShowPrinterPlugin,
         ShowDesignerPlugin,

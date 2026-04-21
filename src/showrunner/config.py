@@ -6,15 +6,13 @@ file discovery, Pydantic validation, and optional live-reload via file watching.
 
 from __future__ import annotations
 
-import logging
+from loguru import logger
 import threading
 import tomllib
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Config models
