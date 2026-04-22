@@ -26,6 +26,15 @@ all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
+# NiceGUI page tests (no browser) — install with: uv sync --group ui-test
+ui-test = [
+    "pytest-asyncio>=0.23",
+]
+# Full-browser Playwright E2E tests — install with: uv sync --group e2e
+# After install run: playwright install chromium
+e2e = [
+    "pytest-playwright>=0.5.0",
+]
 # AV tool integrations — install with: uv sync --group av
 av = [
     "simpleobsws>=1.0",    # ShowRecorder: OBS websocket v5 protocol client
@@ -38,6 +47,11 @@ av = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
+markers = [
+    "ui: NiceGUI page-level tests (no browser, uses user_simulation)",
+    "e2e: full-browser Playwright end-to-end tests (requires live server)",
+]
 
 [tool.ruff]
 line-length = 100
