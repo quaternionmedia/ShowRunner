@@ -117,6 +117,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
         # toggle for cue detail annotations
         show_details: dict = {'v': False}
 
+        # toggle for click-to-add-cue mode
+        cue_mode: dict = {'v': False}
+
         # refs to dynamic containers
         script_select_ref: dict = {'el': None}
         script_content_ref: dict = {'el': None}
@@ -172,13 +175,6 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 s.commit()
                 s.refresh(cl)
                 return cl.id
-
-        def _next_cue_number(cue_list_id: int) -> int:
-            with get_db().session() as s:
-                cues = s.exec(select(Cue).where(Cue.cue_list_id == cue_list_id)).all()
-                if not cues:
-                    return 1
-                return max(c.number for c in cues) + 1
 
         def _push_undo(description: str, reverse_fn: Callable[[], None]) -> None:
             """Push an undo entry onto the stack."""
@@ -295,11 +291,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                         value=c['name'] or '',
                     ).classes('w-full')
 
-                    number_input = ui.number(
+                    number_input = ui.input(
                         label='Number',
-                        value=c['number'],
-                        min=0,
-                        format='%d',
+                        value=c['number'] or '',
                     ).classes('w-full')
 
                     layer_select = ui.select(
@@ -326,11 +320,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                                 _update_cue(
                                     cid,
                                     name=name_input.value,
-                                    number=(
-                                        int(number_input.value)
-                                        if number_input.value
-                                        else c['number']
-                                    ),
+                                    number=number_input.value or None,
                                     layer=layer_select.value,
                                 ),
                                 menu.close(),
@@ -351,10 +341,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 ).classes('self-center')
                 # Editable fields
                 num_input = (
-                    ui.number(
-                        value=c['number'],
-                        min=0,
-                        format='%d',
+                    ui.input(
+                        value=c['number'] or '',
+                        placeholder='#',
                     )
                     .props('dense borderless')
                     .classes('w-16')
@@ -373,7 +362,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 for inp, field in [(num_input, 'number'), (name_input, 'name')]:
 
                     def _save(_, cid=c['id'], f=field, el=inp):
-                        val = int(el.value) if f == 'number' and el.value else el.value
+                        val = el.value or None if f == 'number' else el.value
                         _update_cue(cid, True, **{f: val})
 
                     inp.on('blur', _save)
@@ -519,36 +508,24 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
             def _make_clickable_span(text: str, ln: int, segment_offset: int) -> None:
                 """Create a clickable text span that reports character offset."""
-                el = ui.html(
-                    f'<span style="white-space:pre-wrap; cursor:text"'
-                    f' data-offset="{segment_offset}"'
-                    f'>{_escape(text)}</span>'
-                ).classes('font-mono text-sm')
-                # Force the NiceGUI wrapper to render as <span> instead of <div>
-                el._props['tag'] = 'span'
+                cursor = 'crosshair' if cue_mode['v'] else 'text'
+                # Use ui.element('span') so NiceGUI's standard event dispatch works.
+                # ui.html() does not inject `emit()` into js_handler contexts, so
+                # click events on it would silently never reach Python.
+                el = (
+                    ui.element('span')
+                    .style(f'white-space:pre-wrap; cursor:{cursor}; font-family:monospace; font-size:0.875rem;')
+                    .classes('font-mono text-sm')
+                )
+                el._props['data-offset'] = str(segment_offset)
+                el._props['innerHTML'] = _escape(text) or '\u00a0'
 
                 def _on_click(e, ln=ln, so=segment_offset):
-                    char_offset = 0
-                    if isinstance(e.args, dict):
-                        char_offset = e.args.get('char_offset', 0)
-                    add_cue(ln, so + char_offset)
+                    if not cue_mode['v']:
+                        return
+                    add_cue(ln, so)
 
-                el.on(
-                    'click',
-                    handler=_on_click,
-                    js_handler='''(e) => {
-                        const span = e.target.closest('span') || e.target;
-                        let offset = 0;
-                        if (document.caretPositionFromPoint) {
-                            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
-                            if (pos) offset = pos.offset;
-                        } else if (document.caretRangeFromPoint) {
-                            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
-                            if (range) offset = range.startOffset;
-                        }
-                        emit({char_offset: offset});
-                    }''',
-                )
+                el.on('click', _on_click)
 
             if not line_cues:
                 _make_clickable_span(line or '\u00a0', line_num, 0)
@@ -857,6 +834,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             render_toolbar()
             render_script_content()
 
+        def toggle_cue_mode():
+            cue_mode['v'] = not cue_mode['v']
+            render_toolbar()
+            render_script_content()
+
         def render_toolbar():
             """Render the layer toolbar buttons with active state."""
             container = toolbar_ref['el']
@@ -873,6 +855,17 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                         on_click=lambda _, ly=layer: set_layer(ly),
                         color=color,
                     ).props('dense unelevated' if is_active else 'dense outline')
+                ui.separator().props('vertical')
+                is_cue_mode = cue_mode['v']
+                (
+                    ui.button(
+                        'Q',
+                        on_click=toggle_cue_mode,
+                        color='yellow' if is_cue_mode else None,
+                    )
+                    .props('dense unelevated' if is_cue_mode else 'dense outline')
+                    .tooltip('Click on script to add cue' if is_cue_mode else 'Enable click-to-add cue mode')
+                )
                 ui.separator().props('vertical')
                 ui.button(
                     'Cue Details',
@@ -917,25 +910,27 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 ui.notify('Select a show first.', type='warning')
                 return
             cl_id = _get_or_create_cuelist(show_id)
-            num = _next_cue_number(cl_id)
             layer = selected_layer['v']
 
-            with get_db().session() as s:
-                cue = Cue(
-                    cue_list_id=cl_id,
-                    number=num,
-                    name='',
-                    layer=layer,
-                    script_line=line_num,
-                    script_char=char_pos if line_num is not None else None,
-                )
-                s.add(cue)
-                s.commit()
-                s.refresh(cue)
-                assert cue.id is not None
-                new_id = cue.id
+            try:
+                with get_db().session() as s:
+                    cue = Cue(
+                        cue_list_id=cl_id,
+                        name='',
+                        layer=layer,
+                        script_line=line_num,
+                        script_char=char_pos if line_num is not None else None,
+                    )
+                    s.add(cue)
+                    s.commit()
+                    s.refresh(cue)
+                    assert cue.id is not None
+                    new_id = cue.id
+            except Exception as exc:
+                ui.notify(f'Failed to create cue: {exc}', type='negative')
+                return
 
-            desc = f'Add {layer} cue {num}'
+            desc = f'Add {layer} cue'
             _push_undo(desc, lambda cid=new_id: _delete_cue(cid, False))
 
             pos_desc = ''
@@ -943,7 +938,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 pos_desc = f' at line {line_num}'
                 if char_pos:
                     pos_desc += f', char {char_pos}'
-            ui.notify(f'Added {layer} cue {num}{pos_desc}')
+            ui.notify(f'Added {layer} cue{pos_desc}')
             refresh_all()
 
         def _handle_drop(

@@ -656,7 +656,7 @@ def cues_list(
 @cues_app.command("add")
 def cues_add(
     cue_list_id: int = Argument(..., help="ID of the cue list"),
-    number: int = Argument(..., help="Cue number"),
+    number: Optional[str] = Argument(None, help="Cue number"),
     name: str = Argument(..., help="Cue name or label"),
     layer: Optional[str] = Option(
         None, "--layer", "-l", help="Layer: Lights, Sound, Video, Audio, Stage"

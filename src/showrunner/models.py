@@ -87,7 +87,7 @@ class Cue(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     cue_list_id: int = Field(foreign_key='cue_lists.id')
-    number: int = Field(default=0)
+    number: str | None = None  # main cue number (e.g. "q42")
     point: int = Field(default=0)
     name: str | None = None
     layer: str | None = None  # Lights, Sound, Video, Audio, Stage
