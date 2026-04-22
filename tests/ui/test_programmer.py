@@ -139,7 +139,6 @@ async def test_reset_clears_feedback(programmer_ui):
 
 async def test_reset_resets_pointer(programmer_ui):
     """After reset, GO fires the first cue again."""
-    import showrunner.plugins.programmer as prog
     from nicegui import ui
 
     user, _show_id, _cl_id = programmer_ui

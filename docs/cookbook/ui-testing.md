@@ -164,19 +164,22 @@ uv run pytest tests/e2e/ -v
 uv run pytest tests/e2e/ -v --headed
 ```
 
-!!! note "Requires seeded data"
-    E2E tests need a running server with data.  The `live_server` fixture in `tests/e2e/conftest.py` starts a subprocess server with a temporary DB.  You may need to seed it with `python examples/setup_intro.py --db /path/to/e2e.db` or adapt the fixture to seed data programmatically.
+!!! note "Seeding data"
+    The `live_server` fixture automatically starts a server with a temporary database. To pre-populate it with the intro-video show, run `python examples/setup_intro.py --url http://localhost:8765` after the fixture starts — or extend the fixture to call the seed script in its setup block.
 
 ### Architecture
 
-The `live_server` session-scoped fixture in `tests/e2e/conftest.py` starts a subprocess:
+The `live_server` session-scoped fixture in `tests/e2e/conftest.py` writes a temporary `show.toml`, starts a subprocess server on port 8765, and polls `/docs` as the readiness probe:
 
 ```python
 @pytest.fixture(scope="session")
 def live_server(tmp_path_factory):
-    db_path = tmp_path_factory.mktemp("e2e") / "e2e.db"
-    proc = subprocess.Popen(["uv", "run", "sr", "start", "--db", str(db_path)], ...)
-    # wait for health endpoint, yield base_url, terminate after session
+    tmp = Path(tempfile.mkdtemp(prefix="sr_e2e_"))
+    toml_path.write_text(f'[server]\nport = 8765\n[database]\npath = "{db_path}"')
+    proc = subprocess.Popen(
+        ["uv", "run", "--extra", "cli", "sr", "start", "--config", str(toml_path)], ...
+    )
+    # polls /docs until ready, yields base_url, terminates after session
 ```
 
 Tests receive a `page` fixture from Playwright and the `live_server` base URL:

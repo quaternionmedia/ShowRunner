@@ -13,11 +13,10 @@ Usage in test files::
         await user.should_see('Programmer')
 """
 
+import importlib
 import os
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-
-import importlib
 
 import httpx
 import pytest

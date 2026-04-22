@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Capture screenshots and a GO-flow video from every ShowRunner plugin page.
+
+If a ShowRunner server is already running on http://localhost:8000, uses it
+directly (recommended — your live data will appear in the screenshots).
+Otherwise starts a temporary server on port 8765 and seeds basic data.
+
+Output goes to ``artifacts/`` (gitignored).
+
+Usage::
+
+    uv run scripts/capture_ui
+
+Prerequisites::
+
+    uv sync --group e2e
+    playwright install chromium
+"""
+
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+from pathlib import Path
+
+import httpx
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+DEFAULT_URL = "http://localhost:8000"
+FALLBACK_PORT = 8765
+FALLBACK_URL = f"http://localhost:{FALLBACK_PORT}"
+
+ARTIFACTS = Path("artifacts")
+SCREENSHOT_DIR = ARTIFACTS / "screenshots"
+VIDEO_DIR = ARTIFACTS / "videos"
+
+PAGES = [
+    ("/", "01_dashboard"),
+    ("/programmer", "02_programmer"),
+    ("/script", "03_scripter"),
+]
+
+
+def _is_up(url: str, timeout: float = 1.0) -> bool:
+    try:
+        resp = httpx.get(url, timeout=timeout)
+        return resp.status_code < 500
+    except Exception:
+        return False
+
+
+def _wait_for(url: str, timeout: float = 12.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _is_up(url):
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def _seed_data(base_url: str) -> None:
+    """Seed the running server with intro-video show data (idempotent)."""
+    seed = Path("examples/setup_intro.py")
+    if not seed.exists():
+        print("  (no examples/setup_intro.py — skipping seed)")
+        return
+    print("  seeding data via REST API …")
+    subprocess.run(
+        ["uv", "run", "python", str(seed), "--url", base_url, "--skip-vo"],
+        check=False,
+        capture_output=True,
+    )
+    print("  seed done")
+
+
+def _take_screenshots(base_url: str, pw) -> None:
+    browser = pw.chromium.launch(headless=True)
+    page = browser.new_page(viewport={"width": 1280, "height": 820})
+    for path, name in PAGES:
+        url = base_url + path
+        print(f"  [{name}] {url}")
+        try:
+            page.goto(url, timeout=8000)
+            page.wait_for_load_state("networkidle", timeout=6000)
+        except Exception as exc:
+            print(f"    WARNING: {exc}")
+        out = SCREENSHOT_DIR / f"{name}.png"
+        page.screenshot(path=str(out))
+        print(f"    saved: {out}")
+    browser.close()
+
+
+def _record_go_video(base_url: str, pw) -> None:
+    print("  recording GO flow …")
+    browser = pw.chromium.launch(headless=True)
+    ctx = browser.new_context(
+        viewport={"width": 1280, "height": 820},
+        record_video_dir=str(VIDEO_DIR),
+        record_video_size={"width": 1280, "height": 820},
+    )
+    page = ctx.new_page()
+    try:
+        page.goto(f"{base_url}/programmer", timeout=8000)
+        page.wait_for_load_state("networkidle", timeout=6000)
+        time.sleep(1.2)  # let the wall clock start ticking
+        go_btn = page.get_by_role("button", name="GO")
+        for _ in range(3):
+            if go_btn.is_visible():
+                go_btn.click()
+                time.sleep(1.3)
+        reset_btn = page.get_by_role("button", name="RESET")
+        if reset_btn.is_visible():
+            reset_btn.click()
+        time.sleep(0.8)
+    except Exception as exc:
+        print(f"    WARNING: {exc}")
+    finally:
+        ctx.close()
+        browser.close()
+
+    videos = sorted(VIDEO_DIR.glob("*.webm"))
+    if videos:
+        final = VIDEO_DIR / "programmer_go_flow.webm"
+        shutil.move(str(videos[-1]), str(final))
+        print(f"    saved: {final}")
+
+
+def main() -> int:
+    ARTIFACTS.mkdir(exist_ok=True)
+    SCREENSHOT_DIR.mkdir(exist_ok=True)
+    VIDEO_DIR.mkdir(exist_ok=True)
+
+    # Prefer an already-running server so live data appears in captures.
+    proc = None
+    if _is_up(DEFAULT_URL):
+        base_url = DEFAULT_URL
+        print(f"Using existing server at {base_url}")
+    else:
+        base_url = FALLBACK_URL
+        print(f"No server on {DEFAULT_URL} — starting temporary server on {FALLBACK_URL} …")
+
+        # Write a minimal show.toml pointing to our temp DB.
+        tmp_dir = Path(tempfile.mkdtemp(prefix="sr_capture_"))
+        toml_path = tmp_dir / "show.toml"
+        db_path = tmp_dir / "capture.db"
+        toml_path.write_text(textwrap.dedent(f"""
+            [server]
+            host = "127.0.0.1"
+            port = {FALLBACK_PORT}
+
+            [database]
+            path = "{db_path.as_posix()}"
+        """).lstrip())
+
+        proc = subprocess.Popen(
+            ["uv", "run", "--extra", "cli", "sr", "start", "--config", str(toml_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        if not _wait_for(f"{base_url}/docs"):
+            print("ERROR: server did not respond in time", file=sys.stderr)
+            proc.terminate()
+            return 1
+        print("Server ready.")
+        _seed_data(base_url)
+
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            print("\n--- Screenshots ---")
+            _take_screenshots(base_url, pw)
+            print("\n--- Video ---")
+            _record_go_video(base_url, pw)
+
+        print("\nDone.  Open artifacts/ to review:")
+        print(f"  {SCREENSHOT_DIR}")
+        print(f"  {VIDEO_DIR}")
+        return 0
+
+    finally:
+        if proc is not None:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
