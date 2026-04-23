@@ -17,7 +17,7 @@ from loguru import logger
 from .models import Show
 
 # Resolve alembic.ini relative to this file: src/showrunner/ → src/ → project root
-_ALEMBIC_INI = Path(__file__).parent.parent.parent / 'alembic.ini'
+_ALEMBIC_INI = Path(__file__).parent / 'migrations' / 'alembic.ini'
 
 
 class ShowDatabase:

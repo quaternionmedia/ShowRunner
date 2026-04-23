@@ -260,7 +260,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
         def render_cue_chip(c: dict) -> None:
             """Render a draggable, editable cue badge."""
             color = LAYER_COLORS.get(c['layer'], 'grey')
-            label_text = f'{c["layer"][0]}{c["number"]}'
+            number = c['number'] if c['number'] is not None else ''
+            label_text = f'{c["layer"][0]} {number}'
             cue_id = c['id']
 
             # Draggable wrapper: native HTML element with draggable attribute.
@@ -280,7 +281,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     label_text,
                     color=color,
                 )
-                badge.tooltip(f'{c["layer"]} {c["number"]}: {c["name"] or ""}')
+                badge.tooltip(f'{c["layer"]} {number}: {c["name"] or ""}')
 
             with ui.menu().props('anchor="bottom left" self="top left"') as menu:
                 with ui.card().classes('p-3 gap-2').style('min-width: 260px'):
@@ -514,7 +515,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 # click events on it would silently never reach Python.
                 el = (
                     ui.element('span')
-                    .style(f'white-space:pre-wrap; cursor:{cursor}; font-family:monospace; font-size:0.875rem;')
+                    .style(
+                        f'white-space:pre-wrap; cursor:{cursor}; font-family:monospace; font-size:0.875rem;'
+                    )
                     .classes('font-mono text-sm')
                 )
                 el._props['data-offset'] = str(segment_offset)
@@ -523,9 +526,26 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 def _on_click(e, ln=ln, so=segment_offset):
                     if not cue_mode['v']:
                         return
-                    add_cue(ln, so)
+                    char_offset = so
+                    if isinstance(e.args, dict):
+                        char_offset = so + e.args.get('char_offset', 0)
+                    add_cue(ln, char_offset)
 
-                el.on('click', _on_click)
+                el.on(
+                    'click',
+                    handler=_on_click,
+                    js_handler='''(e) => {
+                        let offset = 0;
+                        if (document.caretPositionFromPoint) {
+                            const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+                            if (pos) offset = pos.offset;
+                        } else if (document.caretRangeFromPoint) {
+                            const range = document.caretRangeFromPoint(e.clientX, e.clientY);
+                            if (range) offset = range.startOffset;
+                        }
+                        emit({char_offset: offset});
+                    }''',
+                )
 
             if not line_cues:
                 _make_clickable_span(line or '\u00a0', line_num, 0)
@@ -864,7 +884,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                         color='yellow' if is_cue_mode else None,
                     )
                     .props('dense unelevated' if is_cue_mode else 'dense outline')
-                    .tooltip('Click on script to add cue' if is_cue_mode else 'Enable click-to-add cue mode')
+                    .tooltip(
+                        'Click on script to add cue'
+                        if is_cue_mode
+                        else 'Enable click-to-add cue mode'
+                    )
                 )
                 ui.separator().props('vertical')
                 ui.button(

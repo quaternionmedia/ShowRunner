@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    import typer
+    from typer import Argument, Option, Typer
 except ImportError:
     print(
         "Typer is required for the CLI. "
@@ -17,12 +17,12 @@ except ImportError:
 from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
-from typer import Argument, Option, Typer
 
 from showrunner import ShowRunner
 from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
 from showrunner.models import Cue, CueList, Script, Show
+from showrunner.migrations.cli import migration
 
 console = Console()
 
@@ -35,6 +35,8 @@ cli = Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     no_args_is_help=True,
 )
+
+cli.add_typer(migration, name="migration", help="Database migration commands")
 
 
 @cli.callback()
