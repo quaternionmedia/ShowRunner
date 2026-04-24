@@ -54,6 +54,15 @@ uv sync --all-extras
 
     If you want to choose which extra dependencies to install, you can run `uv sync --extra [extra_name]` for each extra group (e.g. `admin`, `cli`, etc.) or just `uv sync` to install only the core API dependencies and dev tools.
 
+Optional dependency groups for testing and AV integrations:
+
+| Group    | Install                                               | Purpose                              |
+| -------- | ----------------------------------------------------- | ------------------------------------ |
+| `dev`    | included by default                                   | pytest, ruff, black                  |
+| `ui-test`| `uv sync --group ui-test`                             | NiceGUI page-level tests (no browser)|
+| `e2e`    | `uv sync --group e2e` + `playwright install chromium` | Playwright browser tests             |
+| `av`     | `uv sync --group av`                                  | OBS, OSC, Kokoro TTS integrations    |
+
 ### Start the API server
 
 ```bash

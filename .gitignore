@@ -71,3 +71,6 @@ Thumbs.db
 
 # NiceGUI local storage
 .nicegui/
+
+# Generated capture artifacts (screenshots, videos)
+artifacts/

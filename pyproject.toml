@@ -24,8 +24,19 @@ pdf = ["fpdf2>=2.8.7"]
 all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 
 [dependency-groups]
-dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
+dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=0.23", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
+# NiceGUI page tests (no browser) — install with: uv sync --group ui-test
+ui-test = [
+    {include-group = "dev"},
+]
+# Full-browser Playwright E2E tests — install with: uv sync --group e2e
+# After install run: playwright install chromium
+# Requires the cli extra (typer) so the live_server fixture can run `sr start`.
+e2e = [
+    "pytest-playwright>=0.5.0",
+    "showrunner[cli]",
+]
 # AV tool integrations — install with: uv sync --group av
 av = [
     "simpleobsws>=1.0",    # ShowRecorder: OBS websocket v5 protocol client
@@ -37,7 +48,21 @@ av = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# E2E tests conflict with pytest-asyncio when run in the same session
+# (Playwright's sync event loop vs asyncio).  Run them explicitly:
+#   uv run pytest tests/e2e/ -v
+norecursedirs = ["tests/e2e"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
+filterwarnings = [
+    # asyncio_mode is a pytest-asyncio setting; harmless when running E2E tests
+    # without the ui-test group installed (pytest-asyncio not loaded).
+    "ignore::pytest.PytestConfigWarning",
+]
+markers = [
+    "ui: NiceGUI page-level tests (no browser, uses user_simulation)",
+    "e2e: full-browser Playwright end-to-end tests (requires live server)",
+]
 
 [tool.ruff]
 line-length = 100
