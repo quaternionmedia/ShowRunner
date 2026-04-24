@@ -176,9 +176,8 @@ The `live_server` session-scoped fixture in `tests/e2e/conftest.py` writes a tem
 def live_server(tmp_path_factory):
     tmp = Path(tempfile.mkdtemp(prefix="sr_e2e_"))
     toml_path.write_text(f'[server]\nport = 8765\n[database]\npath = "{db_path}"')
-    proc = subprocess.Popen(
-        ["uv", "run", "--extra", "cli", "sr", "start", "--config", str(toml_path)], ...
-    )
+    sr_cmd = shutil.which("sr") or [sys.executable, "-m", "showrunner.cli"]
+    proc = subprocess.Popen([*sr_cmd, "start", "--config", str(toml_path)], ...)
     # polls /docs until ready, yields base_url, terminates after session
 ```
 

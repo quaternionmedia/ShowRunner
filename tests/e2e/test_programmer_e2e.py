@@ -21,19 +21,24 @@ pytestmark = pytest.mark.e2e
 def programmer_page(page, live_server):
     """Navigate to /programmer and return the Playwright ``Page``."""
     page.goto(f"{live_server}/programmer")
-    page.wait_for_selector("text=Programmer", timeout=5000)
+    # Wait for the page heading specifically — a cue named "Scene: Programmer"
+    # also exists in the seeded data, so wait for the h5-styled div only.
+    page.wait_for_selector(".text-h5.font-bold", timeout=5000)
     return page
 
 
 def test_page_title(programmer_page):
     """The page renders the Programmer heading."""
-    assert programmer_page.locator("text=Programmer").is_visible()
+    # Use CSS class selector to avoid strict-mode collision with cue names.
+    assert programmer_page.locator(".text-h5.font-bold").first.is_visible()
 
 
 def test_timing_panel_visible(programmer_page):
     """All three timing rows (TIME / SHOW / CUE) are visible."""
+    # :text-is() does exact case-sensitive matching, avoiding collisions with
+    # "ShowRunner", "Show" dropdown label, and other partial matches.
     for label in ("TIME", "SHOW", "CUE"):
-        assert programmer_page.locator(f"text={label}").is_visible(), (
+        assert programmer_page.locator(f":text-is('{label}')").is_visible(), (
             f"timing label '{label}' not visible"
         )
 
@@ -68,8 +73,12 @@ def test_clock_starts_after_go(programmer_page):
 
 
 def test_reset_restores_idle_state(programmer_page):
-    """RESET after GO clears feedback and shows 'Reset to top.'."""
-    programmer_page.get_by_role("button", name="GO").click()
-    programmer_page.wait_for_selector("text=GO →", timeout=3000)
+    """RESET clears any in-progress state so GO can fire from the top again.
+
+    Shared server state means the pointer may be past the end from earlier
+    tests; always reset first to put the fixture in a known baseline.
+    """
     programmer_page.get_by_role("button", name="RESET").click()
     programmer_page.wait_for_selector("text=Reset to top.", timeout=3000)
+    programmer_page.get_by_role("button", name="GO").click()
+    programmer_page.wait_for_selector("text=GO →", timeout=3000)

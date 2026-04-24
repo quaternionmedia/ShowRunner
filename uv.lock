@@ -3620,6 +3620,7 @@ av = [
 dev = [
     { name = "black" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "ruff" },
     { name = "uvicorn" },
 ]
@@ -3628,9 +3629,14 @@ docs = [
 ]
 e2e = [
     { name = "pytest-playwright" },
+    { name = "showrunner", extra = ["cli"] },
 ]
 ui-test = [
+    { name = "black" },
+    { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "ruff" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -3662,12 +3668,22 @@ av = [
 dev = [
     { name = "black", specifier = ">=26.3.1" },
     { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "ruff", specifier = ">=0.15.8" },
     { name = "uvicorn", specifier = ">=0.42.0" },
 ]
 docs = [{ name = "zensical", specifier = ">=0.0.31" }]
-e2e = [{ name = "pytest-playwright", specifier = ">=0.5.0" }]
-ui-test = [{ name = "pytest-asyncio", specifier = ">=0.23" }]
+e2e = [
+    { name = "pytest-playwright", specifier = ">=0.5.0" },
+    { name = "showrunner", extras = ["cli"] },
+]
+ui-test = [
+    { name = "black", specifier = ">=26.3.1" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "ruff", specifier = ">=0.15.8" },
+    { name = "uvicorn", specifier = ">=0.42.0" },
+]
 
 [[package]]
 name = "simple-websocket"
