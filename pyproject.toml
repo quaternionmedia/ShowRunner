@@ -20,8 +20,9 @@ sr = "showrunner.cli:cli"
 [project.optional-dependencies]
 admin = ["sqladmin>=0.20.1"]
 cli = ["typer>=0.24.1"]
+midi = ["python-rtmidi>=1.5"]
 pdf = ["fpdf2>=2.8.7"]
-all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
+all = ["showrunner[admin]", "showrunner[cli]", "showrunner[midi]", "showrunner[pdf]"]
 
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
