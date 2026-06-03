@@ -50,10 +50,7 @@ async def list_ports():
     """List available MIDI output ports."""
     if not HAS_RTMIDI:
         raise HTTPException(status_code=503, detail='rtmidi not installed')
-    out = rtmidi.MidiOut()
-    ports = out.get_ports()
-    del out
-    return {'ports': ports}
+    return {'ports': _get_ports()}
 
 
 @router.post('/note')
@@ -101,6 +98,14 @@ async def send_cc(
 # ---------------------------------------------------------------------------
 
 
+def _get_ports() -> list[str]:
+    """Return a list of available MIDI output port names."""
+    out = rtmidi.MidiOut()
+    ports = out.get_ports()
+    del out
+    return ports
+
+
 def _resolve_port(port_index: int, port_name: str | None = None) -> int:
     """Return the MIDI output port index to use.
 
@@ -110,11 +115,8 @@ def _resolve_port(port_index: int, port_name: str | None = None) -> int:
     """
     if not port_name:
         return port_index
-    out = rtmidi.MidiOut()
-    ports = out.get_ports()
-    del out
     needle = port_name.lower()
-    for i, name in enumerate(ports):
+    for i, name in enumerate(_get_ports()):
         if needle in name.lower():
             return i
     return port_index
@@ -221,7 +223,7 @@ class ShowMidiPlugin(ShowRunnerPlugin):
             velocity = int(d.get('velocity', 127))
             _send_note(port, channel, note, velocity)
         else:
-            control = int(d.get('control', 0))
+            control = int(d.get('control', 7))
             value = int(d.get('value', 0))
             _send_cc(port, channel, control, value)
 
