@@ -2,6 +2,8 @@
 
 This section covers how to run tests in ShowRunner, both for the core application and for plugins.
 
+For page-level NiceGUI UI tests and Playwright end-to-end tests see the dedicated guide: [UI Testing](ui-testing.md).
+
 ### Run the full test suite
 
 ```bash
