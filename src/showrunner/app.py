@@ -8,11 +8,10 @@ from __future__ import annotations
 from loguru import logger
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from .config import ConfigWatcher, load_config
 from .utils import get_plugin_manager
-from loguru import logger
 from time import time
 from random import choices
 import string
