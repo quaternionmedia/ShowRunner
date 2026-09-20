@@ -54,6 +54,15 @@ uv sync --all-extras
 
     If you want to choose which extra dependencies to install, you can run `uv sync --extra [extra_name]` for each extra group (e.g. `admin`, `cli`, etc.) or just `uv sync` to install only the core API dependencies and dev tools.
 
+Optional dependency groups for testing and AV integrations:
+
+| Group    | Install                                               | Purpose                              |
+| -------- | ----------------------------------------------------- | ------------------------------------ |
+| `dev`    | included by default                                   | pytest, ruff, black                  |
+| `ui-test`| `uv sync --group ui-test`                             | NiceGUI page-level tests (no browser)|
+| `e2e`    | `uv sync --group e2e` + `playwright install chromium` | Playwright browser tests             |
+| `av`     | `uv sync --group av`                                  | OBS, OSC, Kokoro TTS integrations    |
+
 ### Start the API server
 
 ```bash
@@ -61,30 +70,6 @@ sr start
 ```
 
 Visit [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
-
----
-
-## Installation
-
-Clone the repository and sync all dependencies (including development tools):
-
-```bash
-git clone https://github.com/quaternionmedia/ShowRunner.git
-cd ShowRunner
-uv sync
-```
-
-`uv sync` creates a `.venv` and installs everything declared in `pyproject.toml`, including the `dev` group (`uvicorn`, `pytest`, `ruff`, `black`) and `nicegui` (core dependency for the web UI).
-
-### Optional: Admin Panel
-
-To enable the SQLAdmin web interface, install the `admin` dependency group:
-
-```bash
-uv sync --group admin
-```
-
-This adds `sqladmin` and `wtforms`. The admin panel will then be available at `/admin` when the server is running.
 
 ---
 
@@ -97,26 +82,27 @@ The `sr` CLI is the main entry point.
 sr start
 ```
 
-Or run the dev helper script directly:
+Or run with `uv run` without activating the environment:
 
 ```bash
-uv run scripts/dev
+uv run sr start
 ```
 
-Once running, open: [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
+Once running, open [http://localhost:8000](http://localhost:8000) to access the dashboard and tools.
 
-| URL                                | Description                          |
-| ---------------------------------- | ------------------------------------ |
-| http://localhost:8000              | Dashboard (show selector)            |
-| http://localhost:8000/script       | Script viewer and cue editor         |
-| http://localhost:8000/admin        | Admin panel _(requires admin group)_ |
-| http://localhost:8000/api          | FastAPI / OpenAPI interactive docs   |
-| http://localhost:8000/openapi.json | Raw OpenAPI schema                   |
+| URL                                | Description                              |
+| ---------------------------------- | ---------------------------------------- |
+| http://localhost:8000              | Dashboard (show selector)                |
+| http://localhost:8000/script       | ShowScripter — script viewer + cue editor |
+| http://localhost:8000/programmer   | ShowProgrammer — GO panel + cue clock    |
+| http://localhost:8000/admin        | Admin panel _(requires `admin` group)_   |
+| http://localhost:8000/docs         | FastAPI / OpenAPI interactive docs       |
+| http://localhost:8000/openapi.json | Raw OpenAPI schema                       |
 
 ---
 
 ## Next Steps
 
 - [First Show Walkthrough](first-show.md) – step-by-step guide to creating and running your first show
-- [Cookbook](cookbook.md) – common tasks and patterns
-- [Plugin Architecture](architecture/plugin-architecture.md) – deep dive into how plugins work
+- [Cookbook](../cookbook/index.md) – common tasks and patterns
+- [Plugin Architecture](../about/plugin-architecture.md) – deep dive into how plugins work
