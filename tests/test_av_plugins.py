@@ -19,6 +19,11 @@ from fastapi.testclient import TestClient
 
 from showrunner.database import ShowDatabase
 from showrunner.models import Cue, CueList, CueLog, Show
+from showrunner.plugins.programmer import (
+    _cue_durations_from_logs,
+    _fmt,
+    _fmt_ms,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -712,8 +717,9 @@ def test_voicer_generate_503_when_kokoro_not_installed(tmp_path):
 
 def test_go_sets_timing_globals(programmer_env):
     """Firing a cue via GO must set _last_fire_at, _last_fire_name, _show_start_at."""
-    import showrunner.plugins.programmer as prog
     from datetime import datetime
+
+    import showrunner.plugins.programmer as prog
 
     client, db, show_id, list_a, _ = programmer_env
     # Ensure clean state
@@ -771,18 +777,10 @@ def test_reset_clears_timing_globals(programmer_env):
 # ---------------------------------------------------------------------------
 
 
-from showrunner.plugins.programmer import (
-    _cue_durations_from_logs,
-    _fmt,
-    _fmt_ms,
-)
-
-
 class _FakeLog:
     """Minimal CueLog stand-in for unit-testing _cue_durations_from_logs."""
 
     def __init__(self, cue_id, triggered_at, duration_ms=None):
-        from datetime import datetime, timezone
         self.cue_id = cue_id
         self.triggered_at = triggered_at
         self.duration_ms = duration_ms

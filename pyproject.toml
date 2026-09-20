@@ -21,8 +21,12 @@ sr = "showrunner.cli:cli"
 [project.optional-dependencies]
 admin = ["sqladmin>=0.20.1"]
 cli = ["typer>=0.24.1"]
+# python-rtmidi ships no wheel for CPython 3.13 on Windows and its sdist needs
+# a meson toolchain, so the extra is skipped there: ShowMidi imports rtmidi
+# optionally and reports "rtmidi not installed" on its routes when it is absent.
+midi = ["python-rtmidi>=1.5; python_version < '3.13'"]
 pdf = ["fpdf2>=2.8.7"]
-all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
+all = ["showrunner[admin]", "showrunner[cli]", "showrunner[midi]", "showrunner[pdf]"]
 
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=0.23", "ruff>=0.15.8", "uvicorn>=0.42.0"]

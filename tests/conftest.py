@@ -15,7 +15,6 @@ import pytest
 from showrunner.database import ShowDatabase
 
 
-
 @pytest.fixture()
 def db(tmp_path):
     """Provide a fresh, isolated ShowDatabase for each test.

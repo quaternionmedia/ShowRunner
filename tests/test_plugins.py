@@ -4,7 +4,7 @@ import showrunner
 from showrunner.app import ShowRunner, get_plugin_manager
 from showrunner.plugins import get_builtin_plugins
 
-EXPECTED_PLUGIN_COUNT = 17
+EXPECTED_PLUGIN_COUNT = 18
 
 
 # ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ EXPECTED_PLUGIN_COUNT = 17
 
 
 def test_get_builtin_plugins_count():
-    """Exactly 17 plugins are registered by default."""
+    """Exactly 18 plugins are registered by default."""
     assert len(get_builtin_plugins()) == EXPECTED_PLUGIN_COUNT
 
 
