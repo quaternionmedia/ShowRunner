@@ -7,6 +7,7 @@ for the SQLite backend. Plugins and application code should use
 
 from pathlib import Path
 
+from sqlalchemy import inspect
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
@@ -16,7 +17,6 @@ from loguru import logger
 
 from .models import Show
 
-# Resolve alembic.ini relative to this file: src/showrunner/ → src/ → project root
 _ALEMBIC_INI = Path(__file__).parent / 'migrations' / 'alembic.ini'
 
 
@@ -41,48 +41,42 @@ class ShowDatabase:
         )
         logger.debug(f"Created SQLite engine for {self.db_path}")
 
+    def alembic_config(self) -> AlembicConfig:
+        """Alembic config pointed at this database."""
+        cfg = AlembicConfig(str(_ALEMBIC_INI))
+        cfg.attributes['db_url'] = f'sqlite:///{self.db_path}'
+        return cfg
+
     def create_schema(self) -> None:
         """Bring the database schema up to date.
 
-        - Fresh / untracked databases: creates all tables via SQLModel then
-          stamps the Alembic revision at ``head`` (no migrations needed since
-          the tables already match the current models).
-        - Tracked databases: Raises an error and alerts the user to run
-          ``alembic upgrade head`` to apply any pending migrations in order.
+        - Empty database: creates all tables via SQLModel and stamps the
+          Alembic revision at ``head``.
+        - Otherwise (including pre-Alembic databases, which have no revision):
+          raises ``RuntimeError`` unless already at ``head``; run
+          ``sr migration upgrade`` to apply pending migrations.
         """
-        logger.trace("Checking database schema version...")
-        cfg = AlembicConfig(str(_ALEMBIC_INI))
-        cfg.set_main_option('sqlalchemy.url', f'sqlite:///{self.db_path}')
-        script = ScriptDirectory.from_config(cfg)
-        current_head = script.get_current_head()
+        cfg = self.alembic_config()
+        head = ScriptDirectory.from_config(cfg).get_current_head()
 
         with self.engine.connect() as conn:
-            ctx = MigrationContext.configure(conn)
-            current_rev = ctx.get_current_revision()
-            print(f"Current database revision: {current_rev}")
+            current_rev = MigrationContext.configure(conn).get_current_revision()
+            has_tables = bool(inspect(conn).get_table_names())
 
-        if current_rev is None:
-            # Brand-new or pre-Alembic database: create tables and stamp head.
-            logger.trace(
-                "No existing schema detected. Creating new schema and stamping head revision."
-            )
+        if current_rev is None and not has_tables:
             SQLModel.metadata.create_all(self.engine)
             alembic_command.stamp(cfg, 'head')
             logger.info("Created new database schema and stamped head revision.")
             return
 
-        if current_rev != current_head:
-            logger.error(
-                f"Database schema is at revision '{current_rev}', but the latest "
-                f"is '{current_head}'. Pending migrations must be applied."
+        if current_rev != head:
+            msg = (
+                f"Database schema is at revision '{current_rev or 'none (pre-migration)'}', "
+                f"but the latest is '{head}'. Run 'sr migration upgrade' to apply "
+                "pending migrations."
             )
-            raise RuntimeError(
-                f"Database schema is at revision '{current_rev}', but the latest "
-                f"is '{current_head}'. Please run 'alembic upgrade head' to apply pending "
-                "migrations."
-            )
-        # Schema is already up to date, nothing to do.
-        return
+            logger.error(msg)
+            raise RuntimeError(msg)
 
     def session(self) -> Session:
         """Return a new SQLModel ``Session`` bound to the engine."""

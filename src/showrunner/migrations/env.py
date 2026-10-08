@@ -1,5 +1,4 @@
 from logging.config import fileConfig
-from pathlib import Path
 
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
@@ -22,28 +21,21 @@ import showrunner.models  # noqa: F401  side-effect: registers table metadata
 target_metadata = SQLModel.metadata
 
 # ---------------------------------------------------------------------------
-# Resolve database URL from show.toml if available, otherwise use alembic.ini
+# Resolve database URL (same config lookup as the app)
 # ---------------------------------------------------------------------------
 
 
 def _get_url() -> str:
-    """Return SQLite URL, preferring show.toml over alembic.ini."""
-    # Allow CLI override via -x db_url=sqlite:///foo.db
+    """Return the DB URL: ``-x db_url=...`` > caller-supplied > show.toml (same as the app)."""
     x_args = context.get_x_argument(as_dictionary=True)
     if 'db_url' in x_args:
         return x_args['db_url']
+    if config.attributes.get('db_url'):
+        return config.attributes['db_url']
 
-    # Try to load show.toml from the directory Alembic was invoked from
-    toml_path = Path.cwd() / 'show.toml'
-    if toml_path.exists():
-        import tomllib
+    from showrunner.config import load_config
 
-        with open(toml_path, 'rb') as f:
-            data = tomllib.load(f)
-        db_path = data.get('database', {}).get('path', 'show.db')
-        return f'sqlite:///{db_path}'
-
-    return config.get_main_option('sqlalchemy.url', 'sqlite:///show.db')
+    return f'sqlite:///{load_config().database.path}'
 
 
 def run_migrations_offline() -> None:

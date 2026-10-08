@@ -22,6 +22,7 @@ nav = [
         "usage/getting-started.md",
         "usage/first-show.md",
         "usage/config.md",
+        "usage/migrations.md",
     ] },
     { "Cookbook" = [
         "cookbook/index.md",

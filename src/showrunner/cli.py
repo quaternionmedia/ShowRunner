@@ -21,7 +21,7 @@ from sqlmodel import select
 from showrunner import ShowRunner
 from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
-from showrunner.models import Cue, CueList, Script, Show
+from showrunner.models import CUE_ORDER, Cue, CueList, Script, Show
 from showrunner.migrations.cli import migration
 
 console = Console()
@@ -624,7 +624,7 @@ def cues_list(
             session.exec(
                 select(Cue)
                 .where(Cue.cue_list_id == cue_list_id)
-                .order_by(Cue.sequence, Cue.number, Cue.point)
+                .order_by(Cue.sequence, *CUE_ORDER)
             )
         )
     db.close()
@@ -642,7 +642,7 @@ def cues_list(
     table.add_column("Notes", style="dim")
 
     for cue in cues:
-        num = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+        num = cue.number_label or "—"
         table.add_row(
             str(cue.id),
             num,
@@ -658,8 +658,8 @@ def cues_list(
 @cues_app.command("add")
 def cues_add(
     cue_list_id: int = Argument(..., help="ID of the cue list"),
-    number: Optional[str] = Argument(None, help="Cue number"),
     name: str = Argument(..., help="Cue name or label"),
+    number: Optional[str] = Option(None, "--number", "-N", help="Cue number (e.g. 5 or q42)"),
     layer: Optional[str] = Option(
         None, "--layer", "-l", help="Layer: Lights, Sound, Video, Audio, Stage"
     ),
@@ -691,7 +691,7 @@ def cues_add(
         session.commit()
         session.refresh(cue)
 
-        num_str = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+        num_str = cue.number_label or "(unnumbered)"
         console.print(
             f'[green]Added[/green] cue [bold]{num_str} "{cue.name}"[/bold] (id={cue.id}) '
             f'to cue list [bold]"{cue_list.name}"[/bold]'

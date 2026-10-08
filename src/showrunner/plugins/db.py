@@ -14,7 +14,7 @@ from sqlmodel import select
 
 import showrunner
 from showrunner.database import ShowDatabase
-from showrunner.models import Actor, Config, Cue, CueList, CueLog, Show
+from showrunner.models import CUE_ORDER, Actor, Config, Cue, CueList, CueLog, Show
 
 router = APIRouter(prefix='/db', tags=['ShowDB'])
 
@@ -76,7 +76,7 @@ async def list_cues(show_id: int):
             select(Cue)
             .join(CueList)
             .where(CueList.show_id == show_id)
-            .order_by(Cue.number, Cue.point)
+            .order_by(*CUE_ORDER)
         )
         cues = s.exec(stmt).all()
         return [cue.model_dump() for cue in cues]

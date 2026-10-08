@@ -1,4 +1,4 @@
-"""cue_number_nullable
+"""cue_number_nullable: Cue.number becomes an optional string (was NOT NULL int)
 
 Revision ID: 2a50c1c7c24c
 Revises:
@@ -21,6 +21,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Make cues.number nullable (was NOT NULL INTEGER, now NULL TEXT)."""
+    if not sa.inspect(op.get_bind()).has_table('cues'):
+        # Empty database: nothing to alter, create the current schema instead.
+        from sqlmodel import SQLModel
+        import showrunner.models  # noqa: F401
+
+        SQLModel.metadata.create_all(op.get_bind())
+        return
     with op.batch_alter_table('cues') as batch_op:
         batch_op.alter_column(
             'number',
