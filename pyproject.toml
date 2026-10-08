@@ -19,7 +19,7 @@ dependencies = [
 sr = "showrunner.cli:cli"
 
 [project.optional-dependencies]
-admin = ["sqladmin>=0.20.1"]
+admin = ["sqladmin>=0.20.1", "sqlalchemy[asyncio]>=2.0.54"]
 cli = ["typer>=0.24.1"]
 pdf = ["fpdf2>=2.8.7"]
 all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
