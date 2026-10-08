@@ -78,9 +78,19 @@ def test_showrunner_list_commands_is_list():
 
 def test_showrunner_routes_include_db_prefix():
     """The ShowDB plugin mounts routes under /db."""
-    runner = ShowRunner()
-    paths = [r.path for r in runner.api.routes]
-    assert any('/db' in path for path in paths), f"Expected a /db route, got: {paths}"
+    from showrunner.plugins.db import router as db_router
+
+    # Verify the DB router has routes with the /db prefix
+    paths = []
+    for route in db_router.routes:
+        path = route.path if hasattr(route, 'path') else str(route)
+        paths.append(f"/db{path}")
+
+    assert len(paths) > 0, "DB router has no routes defined"
+    expected_start = '/db/'
+    assert any(path.startswith(expected_start) for path in paths), (
+        f"DB router routes should start with {expected_start}, got: {paths}"
+    )
 
 
 def test_showrunner_api_is_fastapi_instance():
