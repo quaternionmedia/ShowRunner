@@ -26,7 +26,7 @@ from sqlmodel import select
 
 
 import showrunner
-from showrunner.models import Cue, CueList, Script
+from showrunner.models import CUE_ORDER, Cue, CueList, Script
 from showrunner.plugins.db import get_db
 
 try:
@@ -396,7 +396,7 @@ def _draw_cue_annotations(
     for cue in relevant:
         layer = cue.layer or 'Lights'
         r, g, b = _cue_color(layout, layer)
-        label = f'{layer[0]}{cue.number}'
+        label = f'{layer[0]}{cue.number_label}'
 
         # Measure the badge.
         pdf.set_font(badge_font_name, badge_font_style, size)
@@ -516,7 +516,7 @@ async def export_script_pdf(
         cues = s.exec(
             select(Cue)
             .where(Cue.cue_list_id == cue_list_id)
-            .order_by(Cue.number, Cue.point)
+            .order_by(*CUE_ORDER)
         ).all()
 
         # Detach data before closing the session.

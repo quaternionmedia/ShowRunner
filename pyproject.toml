@@ -5,6 +5,7 @@ description = "A collection of tools for live performances including script pars
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
+    "alembic>=1.18.4",
     "fastapi>=0.135.2",
     "loguru>=0.7.3",
     "nicegui>=2.0",
@@ -18,7 +19,7 @@ dependencies = [
 sr = "showrunner.cli:cli"
 
 [project.optional-dependencies]
-admin = ["sqladmin>=0.20.1"]
+admin = ["sqladmin>=0.20.1", "sqlalchemy[asyncio]>=2.0.54"]
 cli = ["typer>=0.24.1"]
 midi = ["python-rtmidi>=1.5"]
 pdf = ["fpdf2>=2.8.7"]
@@ -45,5 +46,5 @@ select = ["E", "F", "W", "I"]
 "src/showrunner/plugins/scripter.py" = ["E501"]
 
 [build-system]
-requires = ["uv_build>=0.11.2,<0.12"]
+requires = ["uv_build>=0.11.2,<0.13"]
 build-backend = "uv_build"
