@@ -27,9 +27,14 @@ all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 [dependency-groups]
 dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=1.0", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
+# Browser tests: uv sync --group e2e && uv run playwright install chromium
+e2e = ["pytest-playwright>=0.7", "showrunner[cli]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/e2e drives a real browser and runs on its own: uv run pytest tests/e2e
+# (Playwright's sync API holds an event loop that the async page tests then can't start.)
+norecursedirs = ["tests/e2e"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
