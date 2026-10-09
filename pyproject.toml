@@ -30,14 +30,22 @@ docs = ["zensical>=0.0.31"]
 # Browser tests: uv sync --group e2e && uv run playwright install chromium
 e2e = ["pytest-playwright>=0.7", "showrunner[cli]"]
 
+[tool.uv]
+# e2e is a default group: walkthrough/03 runs in `uv run pytest` and needs Playwright.
+default-groups = ["dev", "e2e"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# The walkthrough's pages are doctests: `uv run pytest` runs them with the tests,
+# and CI names both paths (testpaths is ignored once pytest is given one).
+testpaths = ["tests", "walkthrough"]
+pythonpath = ["."]
 # tests/e2e drives a real browser and runs on its own: uv run pytest tests/e2e
 # (Playwright's sync API holds an event loop that the async page tests then can't start.)
 norecursedirs = ["tests/e2e"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --doctest-glob=*.md"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 
 [tool.ruff]
 line-length = 100

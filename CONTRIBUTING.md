@@ -84,10 +84,11 @@ Useful URLs once running:
 ## Running Tests
 
 ```bash
+uv run playwright install chromium   # once per machine
 uv run pytest
 ```
 
-All tests live under `tests/`. The test suite uses `tmp_path` fixtures and in-process `TestClient` — no network or external services are needed.
+`uv run pytest` runs `tests/` and the pages in [`walkthrough/`](walkthrough/01-onboarding.md), which are doctests. `tests/` uses `tmp_path` fixtures and in-process `TestClient`, with no network or external services. `walkthrough/03-in-the-browser.md` starts a server on a free port and drives it in Chromium. Without Chromium it fails rather than skipping, and each run rewrites its screenshots in `walkthrough/media/`.
 
 **Individual test files:**
 
