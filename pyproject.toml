@@ -25,12 +25,14 @@ pdf = ["fpdf2>=2.8.7"]
 all = ["showrunner[admin]", "showrunner[cli]", "showrunner[pdf]"]
 
 [dependency-groups]
-dev = ["black>=26.3.1", "pytest>=9.0.2", "ruff>=0.15.8", "uvicorn>=0.42.0"]
+dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=1.0", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100
