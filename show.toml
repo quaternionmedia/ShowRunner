@@ -38,3 +38,7 @@ file_format = "{time} | {level: <8} | {name} | {message}" # custom loguru file f
 #
 # [plugins.mixer]
 # osc-port = 53000
+
+[plugins.showmidi]
+# port = 0          # output port index
+port_name = "Digital Piano:Digital Piano MIDI 1"    # substring match; takes priority over index
