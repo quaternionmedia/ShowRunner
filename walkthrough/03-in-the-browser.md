@@ -20,6 +20,11 @@ change to the UI shows up as a modified file in `git status`.
 
 ```
 
+`sr check --url <address> --shots <directory>` runs this page against a server
+that is already up, as the performing family's demo does: `LiveApp` then
+attaches to that server rather than starting one, and the pictures are written
+to the directory it names rather than beside this page.
+
 ## The dashboard
 
 The header carries the menu, the show selector and plugin status. With one show

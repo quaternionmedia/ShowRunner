@@ -1,0 +1,46 @@
+"""`sr serve` and `sr check`: the performing family's demo contract.
+
+Hermetic. `serve` is stopped short of binding anything, and `check` is shown
+refusing to call a missing server a failure.
+"""
+
+import tomllib
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from showrunner import cli as sr
+
+runner = CliRunner()
+
+
+def test_serve_puts_the_database_log_and_config_under_state(tmp_path, monkeypatch):
+    started = {}
+    monkeypatch.setattr(sr, 'start', lambda **kwargs: started.update(kwargs))
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / 'state'
+
+    result = runner.invoke(
+        sr.cli, ['serve', '--host', '127.0.0.1', '--port', '18400', '--state', str(state)]
+    )
+
+    assert result.exit_code == 0, result.output
+    config = tomllib.loads((state / 'show.toml').read_text(encoding='utf-8'))
+    assert config['server'] == {'host': '127.0.0.1', 'port': 18400}
+    assert Path(config['database']['path']) == state.resolve() / 'show.db'
+    assert Path(config['plugins']['showlogger']['file']) == state.resolve() / 'show.log'
+    assert started == {
+        'host': '127.0.0.1', 'port': 18400, 'config': state.resolve() / 'show.toml', 'reload': False
+    }
+    assert Path.cwd() == state.resolve()
+
+
+def test_check_with_nothing_answering_cannot_say_and_does_not_fail(tmp_path):
+    # Port 9 is discard: nothing serves HTTP there, and nothing is bound here.
+    result = runner.invoke(
+        sr.cli, ['check', '--url', 'http://127.0.0.1:9/', '--shots', str(tmp_path / 'shots')]
+    )
+
+    assert result.exit_code == sr.CANNOT_SAY == 3
+    assert 'nothing answers at http://127.0.0.1:9/' in result.output
+    assert not (tmp_path / 'shots').exists()

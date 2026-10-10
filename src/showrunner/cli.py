@@ -1,7 +1,10 @@
 from loguru import logger
+import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -200,6 +203,107 @@ def start(
     finally:
         show.shutdown()
         console.print("[yellow]ShowRunner stopped.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# The performing family's demo contract: `serve` on the address it is given
+# with every file under one directory, and `check` an instance that is already
+# up. The contract is declared once, in the qm corpus's ci/family-demo.yaml.
+# ---------------------------------------------------------------------------
+
+# Where the page `check` runs lives: this file is src/showrunner/cli.py.
+ROOT = Path(__file__).resolve().parents[2]
+BROWSER_PAGE = 'walkthrough/03-in-the-browser.md'
+
+# What `check` exits with when it has nothing to check against. Not 1: a
+# server that is not answering, or a browser that will not start, says nothing
+# about ShowRunner.
+CANNOT_SAY = 3
+
+
+@cli.command()
+def serve(
+    host: str = Option('127.0.0.1', '--host', help='Address to bind to'),
+    port: int = Option(..., '--port', help='Port to listen on'),
+    state: Path = Option(
+        ..., '--state', help='Directory the database, log and config are written to'
+    ),
+):
+    """Start the server with its database, log and config under STATE.
+
+    `sr start` with a show.toml written into STATE, run from STATE: without
+    one, the server reads show.toml from its working directory or from the
+    home directory, and keeps its database wherever that file says.
+    """
+    state = state.resolve()
+    state.mkdir(parents=True, exist_ok=True)
+    config = state / 'show.toml'
+    config.write_text(
+        '[server]\n'
+        f'host = "{host}"\n'
+        f'port = {port}\n'
+        '\n[database]\n'
+        f'path = "{(state / "show.db").as_posix()}"\n'
+        '\n[plugins.showlogger]\n'
+        'level = "INFO"\n'
+        f'file = "{(state / "show.log").as_posix()}"\n',
+        encoding='utf-8',
+    )
+    os.chdir(state)
+    start(host=host, port=port, config=config, reload=False)
+
+
+@cli.command()
+def check(
+    url: str = Option(..., '--url', help='Where the instance to check is serving'),
+    shots: Path = Option(..., '--shots', help='Directory the screenshots go to'),
+):
+    """Run the walkthrough's browser page against the instance at URL.
+
+    The page's own assertions, attached to a server somebody else started
+    instead of one of its own. Exits 0 when every assertion holds and 1 when
+    one does not, which is pytest's status; 3 when there is nothing to check
+    against.
+    """
+    page = ROOT / BROWSER_PAGE
+    if not page.is_file():
+        _cannot_say(f'{BROWSER_PAGE} is not beside this install ({ROOT})')
+    if not _answers(url):
+        _cannot_say(f'nothing answers at {url}')
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as driver:
+            driver.chromium.launch().close()
+    except Exception as error:  # an import or a launch: either way, no browser
+        _cannot_say(f'Chromium would not start: {type(error).__name__}: {error}')
+    shots = shots.resolve()
+    shots.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        'SHOWRUNNER_WALKTHROUGH_URL': url,
+        'SHOWRUNNER_WALKTHROUGH_SHOTS': str(shots),
+        'PYTHONDONTWRITEBYTECODE': '1',
+    }
+    done = subprocess.run(
+        [sys.executable, '-m', 'pytest', BROWSER_PAGE, '-p', 'no:cacheprovider'],
+        cwd=ROOT,
+        env=env,
+    )
+    raise SystemExit(done.returncode)
+
+
+def _answers(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _cannot_say(why: str) -> None:
+    print(f'check could not run: {why}', file=sys.stderr)
+    raise SystemExit(CANNOT_SAY)
 
 
 @cli.command()

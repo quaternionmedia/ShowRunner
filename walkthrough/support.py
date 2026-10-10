@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -19,7 +20,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-MEDIA = Path(__file__).resolve().parent / 'media'
+# `sr check` points the shutter elsewhere, so a check of somebody else's server
+# writes no picture into the checkout.
+MEDIA = Path(os.environ.get('SHOWRUNNER_WALKTHROUGH_SHOTS') or Path(__file__).resolve().parent / 'media')
 STARTUP_TIMEOUT = 40.0  # a cold start on Windows imports FastAPI and NiceGUI first
 
 # Everything to shut down however the run ends: doctest stops at the first
@@ -51,15 +54,27 @@ class LiveApp:
 
     A port of its own rather than 8000, where a developer's own server usually
     runs: a page that measured that one would test whatever code it was running.
+
+    With ``SHOWRUNNER_WALKTHROUGH_URL`` set -- ``sr check --url`` sets it -- the
+    page attaches to the server already answering there, and neither starts
+    nor stops one.
     """
 
     def __init__(self) -> None:
+        self.attached = os.environ.get('SHOWRUNNER_WALKTHROUGH_URL', '').rstrip('/')
+        self.process: subprocess.Popen | None = None
+        if self.attached:
+            self.base = self.attached
+            return
         self.dir = Path(tempfile.mkdtemp(prefix='showrunner-walkthrough-'))
         self.port = _free_port()
         self.base = f'http://127.0.0.1:{self.port}'
-        self.process: subprocess.Popen | None = None
 
     def start(self) -> LiveApp:
+        if self.attached:
+            if not self._answering():
+                raise Unreachable(f'{self.base} does not answer')
+            return self
         config = self.dir / 'show.toml'
         config.write_text(textwrap.dedent(f"""
             [server]
@@ -79,14 +94,17 @@ class LiveApp:
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 raise Unreachable(f'sr start exited with {self.process.returncode}: {self.log}')
-            try:
-                with urllib.request.urlopen(f'{self.base}/openapi.json', timeout=1) as r:
-                    if r.status == 200:
-                        return self
-            except (urllib.error.URLError, OSError):
-                pass
+            if self._answering():
+                return self
             time.sleep(0.2)
         raise Unreachable(f'{self.base} never answered: {self.log}')
+
+    def _answering(self) -> bool:
+        try:
+            with urllib.request.urlopen(f'{self.base}/openapi.json', timeout=1) as r:
+                return r.status == 200
+        except (urllib.error.URLError, OSError):
+            return False
 
     def post(self, path: str) -> dict:
         request = urllib.request.Request(self.base + path, method='POST')
@@ -113,7 +131,7 @@ class Shots:
 
     def __init__(self, page_slug: str) -> None:
         self.slug = page_slug
-        MEDIA.mkdir(exist_ok=True)
+        MEDIA.mkdir(parents=True, exist_ok=True)
 
     def take(self, page, name: str) -> str:
         path = MEDIA / f'{self.slug}-{name}.png'
