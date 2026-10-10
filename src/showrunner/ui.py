@@ -163,14 +163,29 @@ def header(pm=None) -> None:
             else:
                 ui.label("No shows").classes("text-white text-body2 text-grey")
 
-            # Plugin status icons
-            for si in status_icons:
-                icon_name = si.get("icon", "circle")
-                tooltip = si.get("tooltip", "")
-                color = si.get("color", "grey")
-                btn = ui.icon(icon_name).classes(f"text-{color} text-lg cursor-pointer")
-                if tooltip:
-                    btn.tooltip(tooltip)
+            # Plugin status icons: re-polled so colours follow state; "path" makes them clickable
+            @ui.refreshable
+            def status_row(items: list[dict]) -> None:
+                for si in items:
+                    btn = ui.icon(si.get("icon", "circle")).classes(
+                        f"text-{si.get('color', 'grey')} text-lg"
+                        + (" cursor-pointer" if si.get("path") else "")
+                    )
+                    if si.get("tooltip"):
+                        btn.tooltip(si["tooltip"])
+                    if si.get("path"):
+                        btn.on("click", lambda _, p=si["path"]: ui.navigate.to(p))
+
+            last: dict = {"items": status_icons}
+            status_row(status_icons)
+
+            def poll_status() -> None:
+                fresh = _get_status_icons(pm) if pm else []
+                if fresh != last["items"]:
+                    last["items"] = fresh
+                    status_row.refresh(fresh)
+
+            ui.timer(1, poll_status)
 
         # -- RIGHT: user/settings icon --------------------------------------
         with ui.row().classes("items-center gap-1 no-wrap"):

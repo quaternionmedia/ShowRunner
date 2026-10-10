@@ -293,6 +293,7 @@ def test_db_overrides_toml(db, monkeypatch):
 def test_status():
     p = ShowMidiPlugin()
     assert p.showrunner_get_status()['color'] == 'grey'
+    assert p.showrunner_get_status()['path'] == '/midi'
     _midi.apply(settings())
     assert p.showrunner_get_status()['color'] == 'green'
     _midi.apply(settings(connections=[

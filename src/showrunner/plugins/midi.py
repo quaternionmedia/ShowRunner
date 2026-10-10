@@ -277,7 +277,7 @@ class MidiManager:
             self._outputs[connection].send_message(msg)
 
     def send_note(self, connection: str, channel: int, note: int, velocity: int) -> None:
-        # ponytail: no duration_ms auto Note Off yet; add a threading.Timer here if cues need it.
+        # shortcut: no duration_ms auto Note Off, add a threading.Timer when cues need timed notes
         kind = 0x90 if velocity > 0 else 0x80
         self.send(connection, [kind | (channel - 1) & 0x0F, note & 0x7F, velocity & 0x7F])
 
@@ -584,10 +584,12 @@ class ShowMidiPlugin(ShowRunnerPlugin):
             return None
         enabled = [c for c in _midi.settings.connections if c.enabled]
         if not enabled:
-            return {'icon': 'piano', 'tooltip': 'MIDI: no connections', 'color': 'grey'}
+            return {'icon': 'piano', 'tooltip': 'MIDI: no connections', 'color': 'grey',
+                    'path': '/midi'}
         n = sum(_midi.is_open(c.direction, c.name) for c in enabled)
         color = 'green' if n == len(enabled) else 'amber' if n else 'red'
-        return {'icon': 'piano', 'tooltip': f'MIDI: {n}/{len(enabled)} connected', 'color': color}
+        return {'icon': 'piano', 'tooltip': f'MIDI: {n}/{len(enabled)} connected',
+                'color': color, 'path': '/midi'}
 
 
 # ---------------------------------------------------------------------------
