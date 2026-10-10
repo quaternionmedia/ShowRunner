@@ -1,0 +1,36 @@
+changelog:
+  categories:
+    - title: Breaking Changes 🪅
+      labels:
+        - breaking 💔
+
+    - title: New Features 🎉
+      labels:
+        - enhancement ➕
+        - enhancement
+
+    - title: Bugfixes 🐛
+      labels:
+        - bug 🐛
+        - bug
+
+    - title: Deployment 🚀
+      labels:
+        - production 🎭
+        - dev 💻
+
+    - title: Maintenance 🔩
+      labels:
+        - maintenance 🔧
+        - CI 🦾
+        - CD 🏗️
+        - dependencies
+
+    - title: Documentation 📚
+      labels:
+        - documentation 📜
+        - documentation
+
+    - title: Other Changes 👽
+      labels:
+        - '*'

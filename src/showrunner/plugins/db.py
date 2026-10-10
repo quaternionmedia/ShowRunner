@@ -17,7 +17,7 @@ from sqlmodel import select
 
 import showrunner
 from showrunner.database import ShowDatabase
-from showrunner.models import Actor, Config, Cue, CueList, CueLog, Script, Show
+from showrunner.models import CUE_ORDER, Actor, Config, Cue, CueList, CueLog, Script, Show
 
 
 class ScriptCreate(BaseModel):
@@ -179,7 +179,7 @@ async def list_cues_by_list(cue_list_id: int):
         cues = s.exec(
             select(Cue)
             .where(Cue.cue_list_id == cue_list_id)
-            .order_by(Cue.number, Cue.point)
+            .order_by(*CUE_ORDER)
         ).all()
         return [cue.model_dump() for cue in cues]
 
@@ -216,7 +216,7 @@ async def list_cues(
         stmt = select(Cue).join(CueList).where(CueList.show_id == show_id)
         if cue_list_id is not None:
             stmt = stmt.where(Cue.cue_list_id == cue_list_id)
-        stmt = stmt.order_by(Cue.number, Cue.point)
+        stmt = stmt.order_by(*CUE_ORDER)
         cues = s.exec(stmt).all()
         return [cue.model_dump() for cue in cues]
 

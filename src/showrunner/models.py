@@ -8,6 +8,7 @@ with SQLite by default.
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy import Integer, cast
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -87,7 +88,7 @@ class Cue(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     cue_list_id: int = Field(foreign_key='cue_lists.id')
-    number: int = Field(default=0)
+    number: str | None = None  # main cue number (e.g. "q42")
     point: int = Field(default=0)
     name: str | None = None
     layer: str | None = None  # Lights, Sound, Video, Audio, Stage
@@ -104,13 +105,14 @@ class Cue(SQLModel, table=True):
     cue_list: Optional[CueList] = Relationship(back_populates='cues')
     cue_logs: list['CueLog'] = Relationship(back_populates='cue')
 
+    @property
+    def number_label(self) -> str:
+        """Cue number with point (e.g. ``5.1``); empty string when unnumbered."""
+        label = '' if self.number is None else str(self.number)
+        return f'{label}.{self.point}' if self.point else label
+
     def __str__(self) -> str:
-        label = f'{self.number}'
-        if self.point:
-            label += f'.{self.point}'
-        if self.name:
-            label += f' {self.name}'
-        return label
+        return ' '.join(filter(None, [self.number_label, self.name]))
 
 
 class Actor(SQLModel, table=True):
@@ -167,3 +169,8 @@ class Config(SQLModel, table=True):
 
     def __str__(self) -> str:
         return f'Config {self.key}={self.value}'
+
+
+# Sort cues numerically (10 after 2); unnumbered first.
+# ponytail: non-numeric numbers (e.g. "q42") cast to 0 and tie-break as text.
+CUE_ORDER = (cast(Cue.number, Integer), Cue.number, Cue.point)

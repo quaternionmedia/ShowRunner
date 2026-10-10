@@ -273,3 +273,9 @@ def test_cuelog_duration_ms_defaults_to_none(db):
     with db.session() as s:
         result = s.get(CueLog, log_id)
         assert result.duration_ms is None
+
+
+def test_cue_number_label_and_str_handle_unnumbered():
+    assert Cue(cue_list_id=1, number=None, name='Go').number_label == ''
+    assert str(Cue(cue_list_id=1, number=None, name='Go')) == 'Go'
+    assert str(Cue(cue_list_id=1, number='5', point=1, name='Go')) == '5.1 Go'

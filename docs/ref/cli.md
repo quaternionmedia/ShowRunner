@@ -22,7 +22,11 @@ sr --help
 | `sr cue-lists list <show-id>`            | List cue lists                     |
 | `sr cue-lists create <show-id> <name>`   | Create a cue list                  |
 | `sr cues list <cue-list-id>`             | List cues                          |
-| `sr cues add <cue-list-id> <num> <name>` | Add a cue                          |
+| `sr cues add <cue-list-id> <name>`       | Add a cue (`--number` optional)    |
+| `sr migration current`                   | Show current schema revision       |
+| `sr migration list`                      | Show migration history             |
+| `sr migration upgrade`                   | Apply pending migrations           |
+| `sr migration downgrade <rev>`           | Roll back to a revision            |
 
 ## Plugin scaffolding
 

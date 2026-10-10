@@ -470,7 +470,8 @@ def test_programmer_go_fires_first_cue(programmer_env):
     response = client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["number"] == 1
+    # A cue number is text since the cue-number migration (e.g. "q42").
+    assert data["number"] == "1"
     assert data["pointer"] == 1
 
 
@@ -479,7 +480,7 @@ def test_programmer_go_advances_pointer_sequentially(programmer_env):
     for expected in range(1, 4):
         response = client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
         assert response.status_code == 200
-        assert response.json()["number"] == expected
+        assert response.json()["number"] == str(expected)
 
 
 def test_programmer_go_past_end_returns_409(programmer_env):
@@ -501,7 +502,7 @@ def test_programmer_go_resets_pointer_on_list_change(programmer_env):
     # Switch to list B — must start from cue 1, not continue from pointer=2
     response = client.post(f"/programmer/go?cue_list_id={list_b}&show_id={show_id}")
     assert response.status_code == 200
-    assert response.json()["number"] == 1
+    assert response.json()["number"] == "1"
 
 
 def test_programmer_reset_zeroes_pointer(programmer_env):
@@ -515,7 +516,7 @@ def test_programmer_reset_zeroes_pointer(programmer_env):
 
     # After reset, next GO should fire cue 1 again
     go_response = client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}")
-    assert go_response.json()["number"] == 1
+    assert go_response.json()["number"] == "1"
 
 
 def test_programmer_status_reflects_pointer(programmer_env):
@@ -530,7 +531,7 @@ def test_programmer_fire_by_number(programmer_env):
     client, db, show_id, list_a, _ = programmer_env
     response = client.post(f"/programmer/cue/2?cue_list_id={list_a}&show_id={show_id}")
     assert response.status_code == 200
-    assert response.json()["number"] == 2
+    assert response.json()["number"] == "2"
 
 
 def test_programmer_fire_by_invalid_number_returns_400(programmer_env):

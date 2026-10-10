@@ -276,3 +276,20 @@ def test_cue_log_references_cue(db: ShowDatabase):
     with db.session() as s:
         result = s.get(CueLog, log_id)
         assert result.cue_id == cue_id
+
+
+def test_cue_order_is_numeric(db: ShowDatabase):
+    from showrunner.models import CUE_ORDER
+
+    with db.session() as s:
+        show = Show(name='S')
+        s.add(show)
+        s.commit()
+        cl = CueList(show_id=show.id, name='CL')
+        s.add(cl)
+        s.commit()
+        for n in ['10', '2', None, '1']:
+            s.add(Cue(cue_list_id=cl.id, number=n))
+        s.commit()
+        got = [c.number for c in s.exec(select(Cue).order_by(*CUE_ORDER))]
+    assert got == [None, '1', '2', '10']

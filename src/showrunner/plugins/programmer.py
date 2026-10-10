@@ -192,13 +192,14 @@ async def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
             status_str = "ok" if http_ok else "failed"
             logger.info("HTTP cue %s → %s: %s", cue, http_cfg.get("path"), status_str)
 
-    # Write CueLog — store naive UTC so SQLite round-trip is consistent
+    # Write CueLog in aware UTC: SQLModel refuses a naive datetime on a
+    # datetime column, and _cue_durations_from_logs strips the zone on read.
     db = getattr(app, "db", None)
     if db is not None:
         log_entry = CueLog(
             show_id=show_id,
             cue_id=cue.id,
-            triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            triggered_at=datetime.now(timezone.utc),
             notes=json.dumps({"scene": cue.name, "osc_address": osc_address}),
         )
         with db.session() as session:

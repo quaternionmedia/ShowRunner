@@ -1,10 +1,11 @@
 [project]
 name = "showrunner"
-version = "0.1.0"
+version = "0.2.0"
 description = "A collection of tools for live performances including script parsing, cue management, and more."
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 dependencies = [
+    "alembic>=1.18.4",
     "fastapi>=0.135.2",
     "loguru>=0.7.3",
     "httpx>=0.27",
@@ -19,7 +20,7 @@ dependencies = [
 sr = "showrunner.cli:cli"
 
 [project.optional-dependencies]
-admin = ["sqladmin>=0.20.1"]
+admin = ["sqladmin>=0.20.1", "sqlalchemy[asyncio]>=2.0.54"]
 cli = ["typer>=0.24.1"]
 # python-rtmidi ships no wheel for CPython 3.13 on Windows and its sdist needs
 # a meson toolchain, so the extra is skipped there: ShowMidi imports rtmidi
@@ -29,19 +30,14 @@ pdf = ["fpdf2>=2.8.7"]
 all = ["showrunner[admin]", "showrunner[cli]", "showrunner[midi]", "showrunner[pdf]"]
 
 [dependency-groups]
-dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=0.23", "ruff>=0.15.8", "uvicorn>=0.42.0"]
+dev = ["black>=26.3.1", "pytest>=9.0.2", "pytest-asyncio>=1.0", "ruff>=0.15.8", "uvicorn>=0.42.0"]
 docs = ["zensical>=0.0.31"]
 # NiceGUI page tests (no browser) — install with: uv sync --group ui-test
 ui-test = [
     {include-group = "dev"},
 ]
-# Full-browser Playwright E2E tests — install with: uv sync --group e2e
-# After install run: playwright install chromium
-# Requires the cli extra (typer) so the live_server fixture can run `sr start`.
-e2e = [
-    "pytest-playwright>=0.5.0",
-    "showrunner[cli]",
-]
+# Browser tests: uv sync --group e2e && uv run playwright install chromium
+e2e = ["pytest-playwright>=0.7", "showrunner[cli]"]
 # AV tool integrations — install with: uv sync --group av
 av = [
     "simpleobsws>=1.0",    # ShowRecorder: OBS websocket v5 protocol client
@@ -51,19 +47,22 @@ av = [
     "numpy>=1.24",         # ShowVoicer: audio array concatenation
 ]
 
+[tool.uv]
+# e2e is a default group: walkthrough/03 runs in `uv run pytest` and needs Playwright.
+default-groups = ["dev", "e2e"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-# E2E tests conflict with pytest-asyncio when run in the same session
-# (Playwright's sync event loop vs asyncio).  Run them explicitly:
-#   uv run pytest tests/e2e/ -v
+# The walkthrough's pages are doctests: `uv run pytest` runs them with the tests,
+# and CI names both paths (testpaths is ignored once pytest is given one).
+testpaths = ["tests", "walkthrough"]
+pythonpath = ["."]
+# tests/e2e drives a real browser and runs on its own: uv run pytest tests/e2e
+# (Playwright's sync API holds an event loop that the async page tests then can't start.)
 norecursedirs = ["tests/e2e"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --doctest-glob=*.md"
 asyncio_mode = "auto"
-filterwarnings = [
-    # asyncio_mode is a pytest-asyncio setting; harmless when running E2E tests
-    # without the ui-test group installed (pytest-asyncio not loaded).
-    "ignore::pytest.PytestConfigWarning",
-]
+asyncio_default_fixture_loop_scope = "function"
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 markers = [
     "ui: NiceGUI page-level tests (no browser, uses user_simulation)",
     "e2e: full-browser Playwright end-to-end tests (requires live server)",
@@ -84,5 +83,5 @@ select = ["E", "F", "W", "I"]
 "examples/*.py" = ["E501"]
 
 [build-system]
-requires = ["uv_build>=0.11.2,<0.12"]
+requires = ["uv_build>=0.11.2,<0.13"]
 build-backend = "uv_build"

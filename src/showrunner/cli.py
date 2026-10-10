@@ -1,12 +1,15 @@
 from loguru import logger
+import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
 try:
-    import typer
+    from typer import Argument, Option, Typer
 except ImportError:
     print(
         "Typer is required for the CLI. "
@@ -17,12 +20,12 @@ except ImportError:
 from rich.console import Console
 from rich.table import Table
 from sqlmodel import select
-from typer import Argument, Option, Typer
 
 from showrunner import ShowRunner
 from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
-from showrunner.models import Cue, CueList, Script, Show
+from showrunner.models import CUE_ORDER, Cue, CueList, Script, Show
+from showrunner.migrations.cli import migration
 
 console = Console()
 
@@ -35,6 +38,8 @@ cli = Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     no_args_is_help=True,
 )
+
+cli.add_typer(migration, name="migration", help="Database migration commands")
 
 
 @cli.callback()
@@ -198,6 +203,112 @@ def start(
     finally:
         show.shutdown()
         console.print("[yellow]ShowRunner stopped.[/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# The performing family's demo contract: `serve` on the address it is given
+# with every file under one directory, and `check` an instance that is already
+# up. The contract is declared once, in the qm corpus's ci/family-demo.yaml.
+# ---------------------------------------------------------------------------
+
+# Where the page `check` runs lives: this file is src/showrunner/cli.py.
+ROOT = Path(__file__).resolve().parents[2]
+BROWSER_PAGE = 'walkthrough/03-in-the-browser.md'
+
+# What `check` exits with when it has nothing to check against. Not 1: a
+# server that is not answering, or a browser that will not start, says nothing
+# about ShowRunner.
+CANNOT_SAY = 3
+
+
+@cli.command()
+def serve(
+    host: str = Option('127.0.0.1', '--host', help='Address to bind to'),
+    port: int = Option(..., '--port', help='Port to listen on'),
+    state: Path = Option(
+        ..., '--state', help='Directory the database, log and config are written to'
+    ),
+):
+    """Start the server with its database, log and config under STATE.
+
+    `sr start` with a show.toml written into STATE, run from STATE: without
+    one, the server reads show.toml from its working directory or from the
+    home directory, and keeps its database wherever that file says.
+    """
+    state = state.resolve()
+    state.mkdir(parents=True, exist_ok=True)
+    config = state / 'show.toml'
+    config.write_text(
+        '[server]\n'
+        f'host = "{host}"\n'
+        f'port = {port}\n'
+        '\n[database]\n'
+        f'path = "{(state / "show.db").as_posix()}"\n'
+        '\n[plugins.showlogger]\n'
+        'level = "INFO"\n'
+        f'file = "{(state / "show.log").as_posix()}"\n',
+        encoding='utf-8',
+    )
+    os.chdir(state)
+    start(host=host, port=port, config=config, reload=False)
+
+
+@cli.command()
+def check(
+    url: str = Option(..., '--url', help='Where the instance to check is serving'),
+    shots: Path = Option(..., '--shots', help='Directory the screenshots go to'),
+):
+    """Run the walkthrough's browser page against the instance at URL.
+
+    The page's own assertions, attached to a server somebody else started
+    instead of one of its own. Exits 0 when every assertion holds and 1 when
+    one does not, which is pytest's status; 3 when there is nothing to check
+    against.
+    """
+    page = ROOT / BROWSER_PAGE
+    if not page.is_file():
+        _cannot_say(f'{BROWSER_PAGE} is not beside this install ({ROOT})')
+    if not _answers(url):
+        _cannot_say(f'nothing answers at {url}')
+    # Python exits 1 when `-m` names a module it cannot run, which is also the
+    # status of a failed assertion: a broken pytest would read as ShowRunner failing.
+    runner = subprocess.run([sys.executable, '-m', 'pytest', '--version'], capture_output=True, text=True)
+    if runner.returncode != 0:
+        _cannot_say(f'pytest does not run here: {(runner.stderr or runner.stdout).strip()[-200:]}')
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as driver:
+            driver.chromium.launch().close()
+    except Exception as error:  # an import or a launch: either way, no browser
+        _cannot_say(f'Chromium would not start: {type(error).__name__}: {error}')
+    shots = shots.resolve()
+    shots.mkdir(parents=True, exist_ok=True)
+    env = {
+        **os.environ,
+        'SHOWRUNNER_WALKTHROUGH_URL': url,
+        'SHOWRUNNER_WALKTHROUGH_SHOTS': str(shots),
+        'PYTHONDONTWRITEBYTECODE': '1',
+    }
+    done = subprocess.run(
+        [sys.executable, '-m', 'pytest', BROWSER_PAGE, '-p', 'no:cacheprovider'],
+        cwd=ROOT,
+        env=env,
+    )
+    raise SystemExit(done.returncode)
+
+
+def _answers(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            return 200 <= response.status < 300
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _cannot_say(why: str) -> None:
+    print(f'check could not run: {why}', file=sys.stderr)
+    raise SystemExit(CANNOT_SAY)
 
 
 @cli.command()
@@ -622,7 +733,7 @@ def cues_list(
             session.exec(
                 select(Cue)
                 .where(Cue.cue_list_id == cue_list_id)
-                .order_by(Cue.sequence, Cue.number, Cue.point)
+                .order_by(Cue.sequence, *CUE_ORDER)
             )
         )
     db.close()
@@ -640,7 +751,7 @@ def cues_list(
     table.add_column("Notes", style="dim")
 
     for cue in cues:
-        num = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+        num = cue.number_label or "—"
         table.add_row(
             str(cue.id),
             num,
@@ -656,8 +767,8 @@ def cues_list(
 @cues_app.command("add")
 def cues_add(
     cue_list_id: int = Argument(..., help="ID of the cue list"),
-    number: int = Argument(..., help="Cue number"),
     name: str = Argument(..., help="Cue name or label"),
+    number: Optional[str] = Option(None, "--number", "-N", help="Cue number (e.g. 5 or q42)"),
     layer: Optional[str] = Option(
         None, "--layer", "-l", help="Layer: Lights, Sound, Video, Audio, Stage"
     ),
@@ -689,7 +800,7 @@ def cues_add(
         session.commit()
         session.refresh(cue)
 
-        num_str = f"{cue.number}.{cue.point}" if cue.point else str(cue.number)
+        num_str = cue.number_label or "(unnumbered)"
         console.print(
             f'[green]Added[/green] cue [bold]{num_str} "{cue.name}"[/bold] (id={cue.id}) '
             f'to cue list [bold]"{cue_list.name}"[/bold]'
