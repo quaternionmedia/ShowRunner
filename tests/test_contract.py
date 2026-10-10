@@ -44,3 +44,17 @@ def test_check_with_nothing_answering_cannot_say_and_does_not_fail(tmp_path):
     assert result.exit_code == sr.CANNOT_SAY == 3
     assert 'nothing answers at http://127.0.0.1:9/' in result.output
     assert not (tmp_path / 'shots').exists()
+
+
+def test_check_with_a_broken_pytest_cannot_say_and_does_not_fail(tmp_path, monkeypatch):
+    # Python exits 1 for a module it cannot run: a failed assertion's status.
+    monkeypatch.setattr(sr, '_answers', lambda url: True)
+    broken = sr.subprocess.CompletedProcess([], 1, '', "No module named pytest.__main__")
+    monkeypatch.setattr(sr.subprocess, 'run', lambda *args, **kwargs: broken)
+
+    result = runner.invoke(
+        sr.cli, ['check', '--url', 'http://127.0.0.1:18400/', '--shots', str(tmp_path / 'shots')]
+    )
+
+    assert result.exit_code == sr.CANNOT_SAY
+    assert 'pytest does not run here' in result.output

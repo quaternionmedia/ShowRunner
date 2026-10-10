@@ -270,6 +270,11 @@ def check(
         _cannot_say(f'{BROWSER_PAGE} is not beside this install ({ROOT})')
     if not _answers(url):
         _cannot_say(f'nothing answers at {url}')
+    # Python exits 1 when `-m` names a module it cannot run, which is also the
+    # status of a failed assertion: a broken pytest would read as ShowRunner failing.
+    runner = subprocess.run([sys.executable, '-m', 'pytest', '--version'], capture_output=True, text=True)
+    if runner.returncode != 0:
+        _cannot_say(f'pytest does not run here: {(runner.stderr or runner.stdout).strip()[-200:]}')
     try:
         from playwright.sync_api import sync_playwright
 
