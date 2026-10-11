@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import select
 
 import showrunner
-from showrunner.models import Cue, CueList, CueLog
+from showrunner.models import CUE_ORDER, Cue, CueList, CueLog
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +247,7 @@ async def list_cues(
         cues = session.exec(
             select(Cue)
             .where(Cue.cue_list_id == cue_list_id)
-            .order_by(Cue.number, Cue.point)
+            .order_by(*CUE_ORDER)
         ).all()
 
     return {
@@ -348,7 +348,7 @@ async def go(
         cues = session.exec(
             select(Cue)
             .where(Cue.cue_list_id == cue_list_id)
-            .order_by(Cue.number, Cue.point)
+            .order_by(*CUE_ORDER)
         ).all()
         cues = list(cues)
         for c in cues:
@@ -538,7 +538,7 @@ def _build_page() -> None:
                 s.exec(
                     select(Cue)
                     .where(Cue.cue_list_id == cue_list_id)
-                    .order_by(Cue.number, Cue.point)
+                    .order_by(*CUE_ORDER)
                 ).all()
             )
 

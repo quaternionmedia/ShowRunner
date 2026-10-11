@@ -608,6 +608,35 @@ def test_fire_cue_http_failure_is_reflected_in_response(programmer_env):
 
 
 # ---------------------------------------------------------------------------
+# ShowProgrammer — cue order
+# ---------------------------------------------------------------------------
+
+
+def test_programmer_fires_cue_10_after_cue_2(programmer_env):
+    """Cue numbers are text; GO and the cue list go by their value.
+
+    Mutation: GO's order_by put back to (Cue.number, Cue.point) -- red here,
+    firing 1, 10, 2.
+    """
+    client, db, show_id, _, _ = programmer_env
+    with db.session() as session:
+        cue_list = CueList(show_id=show_id, name="Numbers")
+        session.add(cue_list)
+        session.flush()
+        for number in ("10", "2", "1"):
+            session.add(Cue(cue_list_id=cue_list.id, number=number, name=f"cue {number}"))
+        session.commit()
+        list_id = cue_list.id
+
+    go = f"/programmer/go?cue_list_id={list_id}&show_id={show_id}"
+    fired = [client.post(go).json()["number"] for _ in range(3)]
+    cues = client.get(f"/programmer/cues?cue_list_id={list_id}").json()["cues"]
+
+    assert fired == ["1", "2", "10"]
+    assert [c["number"] for c in cues] == ["1", "2", "10"]
+
+
+# ---------------------------------------------------------------------------
 # ShowRecorder — _build_mlt_xml with obs_output_dir
 # ---------------------------------------------------------------------------
 
