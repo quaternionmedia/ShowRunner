@@ -90,3 +90,11 @@ value = 0                     # Velocity or CC value (0–127)
 - Settings are loaded from the current show's `Config` table (`key='midi.settings'`) if available, falling back to `show.toml` `[plugins.showmidi]`.
 - The UI page (`/midi`) saves changes to the database for the current show, not to `show.toml`.
 - This allows per-show MIDI configurations without touching the config file.
+
+**Hotplug:**
+
+- Every `reconnect_interval` seconds, a connection whose device has gone is closed and marked `device disconnected`, and one whose device has appeared is opened.
+- Match `port` on the device's name without a trailing number. On Windows, rtmidi appends a device number (`Launchkey 49 1`), and that number can change after a replug.
+- On Windows, closing an input whose device has gone fails and leaves the client half-closed. Such a client is retired and replaced by a fresh one on reconnect, instead of being reused.
+- A device unplugged and replugged within one interval goes unnoticed. The connection still reads `connected`, but its handle is stale and neither direction works until the device is next unplugged for longer than an interval. A shorter interval narrows that window.
+- Windows (WinMM) cannot create virtual ports.
