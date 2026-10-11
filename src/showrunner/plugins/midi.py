@@ -137,6 +137,8 @@ class MidiManager(ConnectionManager):
         # one rtmidi object (= one ALSA client) per port, reused across reconnects
         self._clients: dict[tuple[str, str, str, bool], Any] = {}  # (conn, port, dir, virtual)
         self._probe: dict[str, Any] = {}  # direction -> client used for listing ports
+        # clients whose close_port() failed: never reused, closed or deleted again
+        self._retired: list[Any] = []
 
     # -- ports --------------------------------------------------------------
 
@@ -182,10 +184,31 @@ class MidiManager(ConnectionManager):
             client.set_callback(self._on_midi, (conn.name, port.name))  # close_port cancels it
         return client
 
+    def _detach(self, ckey: tuple[str, str, str, bool]) -> bool:
+        """``close_port()`` the client for ``ckey``; retire it if that fails.
+
+        python-rtmidi 1.5.8 bundles RtMidi 5.0.0, whose WinMM input ``closePort()`` fails
+        once the device has vanished and leaves the object half-closed: reopening it is a
+        silent no-op, and closing it again (``close_port``, ``delete`` or the destructor)
+        corrupts the heap. Such a client is dropped from ``_clients``, so ``open`` makes a
+        fresh one, and kept referenced so its destructor never runs.
+        """
+        client = self._clients.get(ckey)
+        if client is None:
+            return False
+        try:
+            client.close_port()
+        except Exception as e:
+            self._retired.append(self._clients.pop(ckey))
+            logger.warning(f'MIDI {ckey[0]}/{ckey[1]}: close failed, client retired ({e})')
+            return False
+        return True
+
     def close(self, key: tuple[str, str], handle: Any) -> None:
         # real ports detach (open() reattaches; the device may have changed); virtual stay open
-        if not any(k[3] and c is handle for k, c in self._clients.items()):
-            handle.close_port()
+        for ckey, client in list(self._clients.items()):
+            if client is handle and not ckey[3]:
+                self._detach(ckey)
 
     def release(self, settings: ConnectionSettings | None) -> None:
         keep = (
@@ -193,14 +216,12 @@ class MidiManager(ConnectionManager):
             if settings
             else set()
         )
-        for key, client in list(self._clients.items()):
-            if key not in keep:
+        for ckey in list(self._clients):
+            if ckey not in keep and self._detach(ckey):
                 try:
-                    client.close_port()
-                    client.delete()
+                    self._clients.pop(ckey).delete()
                 except Exception:
                     pass
-                del self._clients[key]
 
     def present(self, conn: Connection, port: MidiPort) -> bool:
         return port.virtual or self._find_port_index(port.port, port.direction) is not None

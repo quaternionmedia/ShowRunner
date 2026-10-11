@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from showrunner import connection
 from showrunner.models import Show
 from showrunner.plugins import midi
-from showrunner import connection
 from showrunner.plugins.midi import (
     MidiConnection,
     MidiMapping,
@@ -173,7 +173,8 @@ def test_reconnect_and_apply_reuse_client(monkeypatch):
         {'name': 'keys', 'port': 'Digital Piano', 'direction': 'in'},
         {'name': 'sr', 'virtual': True},
     ]))
-    out, keys, sr = _midi.handles[('piano', 'out1')], _midi.handles[('keys', 'in1')], _midi.handles[('sr', 'out1')]
+    h = _midi.handles
+    out, keys, sr = h[('piano', 'out1')], h[('keys', 'in1')], h[('sr', 'out1')]
     monkeypatch.setitem(PORTS, 'out', [])
     monkeypatch.setitem(PORTS, 'in', [])
     _midi.refresh()
@@ -187,6 +188,61 @@ def test_reconnect_and_apply_reuse_client(monkeypatch):
     assert sr.opened == ('virtual', 'sr')  # virtual port never closed
     _midi.apply(settings(connections=[{'name': 'piano', 'port': 'Digital Piano'}]))
     assert keys.deleted and sr.deleted and len(_midi._clients) == 1
+
+
+class WinMMIn(FakeIn):
+    """RtMidi 5.0.0's WinMM input: closing it after its device vanished raises and leaves
+    it half-closed; reopening is then a no-op and closing it again corrupts the heap."""
+
+    vanished = False
+
+    def __init__(self, name='RtMidi'):
+        super().__init__(name)
+        self.half_closed = False
+        self.touched_after_half_close = 0
+
+    def close_port(self):
+        if self.half_closed:
+            self.touched_after_half_close += 1
+        elif self.opened is not None and WinMMIn.vanished:
+            self.half_closed, self.callback = True, None
+            raise SystemError('MidiInWinMM: error closing Windows MM MIDI input port')
+        super().close_port()
+
+    def open_port(self, port=0, name=None):
+        if self.half_closed:
+            self.touched_after_half_close += 1  # rtmidi warns and opens nothing
+            return
+        super().open_port(port, name)
+
+    def delete(self):
+        if self.half_closed:
+            self.touched_after_half_close += 1
+        super().delete()
+
+
+def test_failed_close_retires_client(monkeypatch):
+    """A vanished WinMM input is never reused or closed again; reconnect gets a fresh one."""
+    monkeypatch.setattr(midi, 'rtmidi', types.SimpleNamespace(MidiOut=FakePort, MidiIn=WinMMIn))
+    _midi._probe.clear()
+    _midi.apply(settings(connections=[
+        {'name': 'keys', 'port': 'Digital Piano', 'direction': 'in'},
+    ]))
+    old = _midi.handles[('keys', 'in1')]
+    monkeypatch.setitem(PORTS, 'in', [])
+    monkeypatch.setattr(WinMMIn, 'vanished', True)
+    _midi.refresh()
+    assert old.half_closed
+    assert _midi.errors[('keys', 'in1')] == 'device disconnected'
+    monkeypatch.setitem(PORTS, 'in', ['Digital Piano:Digital Piano MIDI 1 20:0'])
+    monkeypatch.setattr(WinMMIn, 'vanished', False)
+    _midi.refresh()
+    new = _midi.handles[('keys', 'in1')]
+    assert new is not old and new.opened == (0, 'keys') and new.callback is not None
+    _midi.apply(_midi.settings)  # Save & apply
+    _midi.close_all()
+    assert old.touched_after_half_close == 0
+    assert old in _midi._retired  # referenced, so its destructor never closes it again
 
 
 def test_reconnect_thread_toggles():
