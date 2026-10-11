@@ -17,6 +17,10 @@ Cue ``notes`` JSON schema::
 Multiple targets can be configured in show.toml so a single cue fires
 Ardour, OBS, or any other OSC-capable tool simultaneously.
 
+Every fire is also announced to all plugins as the ``cue.fired`` event, with
+the cue and its parsed notes; ShowFamily delivers a ``family`` key from it
+(see ``showrunner.plugins.family``).
+
 Dependencies (optional — graceful degradation when absent):
   pip install python-osc
 """
@@ -123,6 +127,27 @@ def _broadcast_osc(targets: list[dict], address: str, args: list) -> int:
     return sent
 
 
+def _announce(app: Any, cue: Cue, show_id: int, notes: dict, fired_at: datetime) -> None:
+    """Announce the fire to every plugin as ``cue.fired``.
+
+    Plugins act on it without holding up GO: ShowFamily only queues its
+    deliveries here. A plugin that raises is logged and the cue still fires.
+    """
+    pm = getattr(app, "pm", None)
+    if pm is None:
+        return
+    data = {
+        "show_id": show_id,
+        "cue": {"id": cue.id, "number": cue.number_label, "name": cue.name,
+                "fired_at": fired_at.isoformat()},
+        "notes": notes,
+    }
+    try:
+        pm.hook.showrunner_event(event_name="cue.fired", data=data)
+    except Exception:
+        logger.warning("A plugin failed on cue.fired for %s", cue, exc_info=True)
+
+
 async def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
     """Execute a cue: parse notes, dispatch OSC/HTTP actions, write CueLog.
 
@@ -161,12 +186,16 @@ async def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
     osc_args: list = []
     osc_sent = 0
     http_ok: bool | None = None
+    data: dict = {}
 
     if cue.notes:
         try:
             data = json.loads(cue.notes)
         except (json.JSONDecodeError, TypeError):
             logger.debug("Cue %s notes are not JSON — no dispatch", cue)
+            data = {}
+        if not isinstance(data, dict):
+            logger.debug("Cue %s notes are not a JSON object — no dispatch", cue)
             data = {}
 
         # OSC dispatch (UDP — fire-and-forget, inherently non-blocking)
@@ -194,23 +223,27 @@ async def _fire_cue(app: Any, cue: Cue, show_id: int) -> dict:
 
     # Write CueLog in aware UTC: SQLModel refuses a naive datetime on a
     # datetime column, and _cue_durations_from_logs strips the zone on read.
+    fired_at = datetime.now(timezone.utc)
     db = getattr(app, "db", None)
     if db is not None:
         log_entry = CueLog(
             show_id=show_id,
             cue_id=cue.id,
-            triggered_at=datetime.now(timezone.utc),
+            triggered_at=fired_at,
             notes=json.dumps({"scene": cue.name, "osc_address": osc_address}),
         )
         with db.session() as session:
             session.add(log_entry)
             session.commit()
 
+    _announce(app, cue, show_id, data, fired_at)
+
     result = {
         "cue": str(cue),
         "number": cue.number,
         "point": cue.point,
         "name": cue.name,
+        "fired_at": fired_at.isoformat(),
         "osc_address": osc_address,
         "osc_targets_reached": osc_sent,
     }

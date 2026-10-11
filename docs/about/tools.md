@@ -22,6 +22,10 @@ PDF export of scripts with cue annotations, mounted at `/export` (API-only).
 
 Sequential cue dispatcher at `/programmer`.  Fires cues one-by-one on GO, dispatching OSC messages to Ardour (or any OSC target) and HTTP requests to other ShowRunner endpoints such as ShowRecorder.  Maintains a per-session cue pointer, wall clock, show elapsed, and per-cue timer.  Space bar fires GO.
 
+### **ShowFamily**
+
+Delivers each fired cue's `family` block to the apps of the performing family, at `/family`.  Pushes each member's action to `POST /family/cue` on its own server, off the event loop and with a timeout, and holds a pull member's action for it to read.  Every delivery's outcome is listed at `GET /family/`.  See the [plugin reference](../ref/plugins.md#showfamily).
+
 ### **ShowRecorder**
 
 OBS Studio integration via WebSocket v5 at `/recorder`.  Switches scenes and controls recording; stores timing data in CueLog; exports a Kdenlive-compatible MLT XML project for post-production assembly.  Gracefully degrades when OBS is not running.

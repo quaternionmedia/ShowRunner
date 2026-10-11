@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlmodel import select
 
 from showrunner.database import ShowDatabase
 from showrunner.models import Cue, CueList, CueLog, Show
@@ -608,7 +609,7 @@ def test_fire_cue_http_failure_is_reflected_in_response(programmer_env):
 
 
 # ---------------------------------------------------------------------------
-# ShowProgrammer — cue order
+# ShowProgrammer — cue order, and the family block reaching a member
 # ---------------------------------------------------------------------------
 
 
@@ -634,6 +635,46 @@ def test_programmer_fires_cue_10_after_cue_2(programmer_env):
 
     assert fired == ["1", "2", "10"]
     assert [c["number"] for c in cues] == ["1", "2", "10"]
+
+
+def test_a_fired_cue_reaches_a_family_member(programmer_env, fake_member, tmp_path):
+    """GO on a cue whose notes carry a family block: the member gets the cue and its action."""
+    import pluggy
+
+    import showrunner.plugins.family as family
+    import showrunner.plugins.programmer as prog
+    from showrunner.config import load_config
+    from showrunner.hookspecs import ShowRunnerSpec
+
+    client, db, show_id, list_a, _ = programmer_env
+    clock = fake_member("showstopper")
+    config = tmp_path / "show.toml"
+    config.write_text(f'[plugins.family.members]\nshowstopper = "{clock.url}"\n', encoding="utf-8")
+    plugin = family.ShowFamilyPlugin()
+    pm = pluggy.PluginManager("showrunner")
+    pm.add_hookspecs(ShowRunnerSpec)
+    pm.register(plugin)
+    prog._app_ref.pm = pm
+    prog._app_ref.config = load_config(config)
+    plugin.showrunner_startup(prog._app_ref)
+    with db.session() as session:
+        cue = session.exec(
+            select(Cue).where(Cue.cue_list_id == list_a).where(Cue.number == "1")
+        ).one()
+        cue.notes = json.dumps({"family": {"showstopper": {"clock": "start"}}})
+        session.add(cue)
+        session.commit()
+
+    try:
+        fired = client.post(f"/programmer/go?cue_list_id={list_a}&show_id={show_id}").json()
+        assert family._family.wait(10)
+    finally:
+        plugin.showrunner_shutdown(prog._app_ref)
+
+    assert clock.received == [{
+        "cue": {"number": "1", "name": "A-cue-1", "fired_at": fired["fired_at"]},
+        "action": {"clock": "start"},
+    }]
 
 
 # ---------------------------------------------------------------------------

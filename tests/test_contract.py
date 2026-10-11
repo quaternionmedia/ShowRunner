@@ -58,3 +58,40 @@ def test_check_with_a_broken_pytest_cannot_say_and_does_not_fail(tmp_path, monke
 
     assert result.exit_code == sr.CANNOT_SAY
     assert 'pytest does not run here' in result.output
+
+
+def test_serve_writes_the_family_table_from_its_flags(tmp_path, monkeypatch):
+    from showrunner.config import load_config
+    from showrunner.plugins.family import build, settings_of
+
+    monkeypatch.setattr(sr, 'start', lambda **kwargs: None)
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / 'state'
+
+    result = runner.invoke(sr.cli, [
+        'serve', '--port', '18400', '--state', str(state),
+        '--family', 'showstopper=http://127.0.0.1:18411',
+        '--family', 'joe=http://127.0.0.1:18431', '--family-pull', 'leo',
+    ])
+
+    assert result.exit_code == 0, result.output
+    config = tomllib.loads((state / 'show.toml').read_text(encoding='utf-8'))
+    assert config['plugins']['family'] == {
+        'pull': ['leo'],
+        'members': {'showstopper': 'http://127.0.0.1:18411', 'joe': 'http://127.0.0.1:18431'},
+    }
+    family = build(settings_of(load_config(state / 'show.toml')))
+    assert (family.members, family.pull) == (config['plugins']['family']['members'], ['leo'])
+
+
+def test_serve_refuses_a_family_member_with_no_address(tmp_path, monkeypatch):
+    monkeypatch.setattr(sr, 'start', lambda **kwargs: None)
+    monkeypatch.chdir(tmp_path)
+    state = tmp_path / 'state'
+
+    result = runner.invoke(sr.cli, ['serve', '--port', '18400', '--state', str(state),
+                                    '--family', 'showstopper'])
+
+    assert result.exit_code == 2
+    assert 'NAME=http://host:port' in result.output
+    assert not (state / 'show.toml').exists()

@@ -5,6 +5,7 @@ from .scripter import ShowScripterPlugin
 from .printer import ShowPrinterPlugin
 from .designer import ShowDesignerPlugin
 from .programmer import ShowProgrammerPlugin
+from .family import ShowFamilyPlugin
 from .mixer import ShowMixerPlugin
 from .lighter import ShowLighterPlugin
 from .stage_manager import ShowManagerPlugin
@@ -28,6 +29,7 @@ def get_builtin_plugins() -> list[type]:
         ShowPrinterPlugin,
         ShowDesignerPlugin,
         ShowProgrammerPlugin,
+        ShowFamilyPlugin,
         ShowMixerPlugin,
         ShowLighterPlugin,
         ShowManagerPlugin,

@@ -1,4 +1,5 @@
 from loguru import logger
+import json
 import os
 import re
 import subprocess
@@ -228,13 +229,23 @@ def serve(
     state: Path = Option(
         ..., '--state', help='Directory the database, log and config are written to'
     ),
+    family: Optional[list[str]] = Option(
+        None, '--family', metavar='NAME=URL',
+        help='A family member each fired cue is pushed to (repeatable)',
+    ),
+    family_pull: Optional[list[str]] = Option(
+        None, '--family-pull', metavar='NAME',
+        help='A family member that reads its action from the hub (repeatable)',
+    ),
 ):
     """Start the server with its database, log and config under STATE.
 
     `sr start` with a show.toml written into STATE, run from STATE: without
     one, the server reads show.toml from its working directory or from the
     home directory, and keeps its database wherever that file says.
+    `--family` and `--family-pull` become its [plugins.family] table.
     """
+    table = _family_table(family or [], family_pull or [])
     state = state.resolve()
     state.mkdir(parents=True, exist_ok=True)
     config = state / 'show.toml'
@@ -246,11 +257,36 @@ def serve(
         f'path = "{(state / "show.db").as_posix()}"\n'
         '\n[plugins.showlogger]\n'
         'level = "INFO"\n'
-        f'file = "{(state / "show.log").as_posix()}"\n',
+        f'file = "{(state / "show.log").as_posix()}"\n'
+        + table,
         encoding='utf-8',
     )
     os.chdir(state)
     start(host=host, port=port, config=config, reload=False)
+
+
+FAMILY_NAME = re.compile(r'[A-Za-z0-9_-]+')
+
+
+def _family_table(push: list[str], pull: list[str]) -> str:
+    """The [plugins.family] table `serve` writes, or nothing when no member is named."""
+    from typer import BadParameter
+
+    members = {}
+    for pair in push:
+        name, _, url = pair.partition('=')
+        if not FAMILY_NAME.fullmatch(name) or not url.startswith(('http://', 'https://')):
+            raise BadParameter(f'{pair!r} is not NAME=http://host:port', param_hint='--family')
+        members[name] = url
+    for name in pull:
+        if not FAMILY_NAME.fullmatch(name):
+            raise BadParameter(f'{name!r} is not a member name', param_hint='--family-pull')
+    if not members and not pull:
+        return ''
+    lines = ['', '[plugins.family]', f'pull = {json.dumps(list(pull))}', '',
+             '[plugins.family.members]']
+    lines += [f'{name} = {json.dumps(url)}' for name, url in members.items()]
+    return '\n'.join(lines) + '\n'
 
 
 @cli.command()
