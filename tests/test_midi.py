@@ -7,14 +7,13 @@ import pytest
 
 from showrunner.models import Show
 from showrunner.plugins import midi
+from showrunner import connection
 from showrunner.plugins.midi import (
-    Connection,
-    Mapping,
+    MidiConnection,
+    MidiMapping,
     ShowMidiPlugin,
     ShowMidiSettings,
-    _load_settings,
     _midi,
-    _save_settings,
     decode,
     stable_port_name,
 )
@@ -98,12 +97,12 @@ def settings(**kw):
 
 def test_models_validate():
     with pytest.raises(ValueError):
-        Connection(name='x', port='p', direction='sideways')
+        MidiConnection(name='x', ports=[{'port': 'p', 'direction': 'sideways'}])
     with pytest.raises(ValueError):
-        Connection(name='x', port='')  # needs a port unless virtual
-    assert Connection(name='x', virtual=True).port == ''
+        MidiConnection(name='x', ports=[{'port': ''}])  # needs a port unless virtual
+    assert MidiConnection(name='x', ports=[{'virtual': True}]).ports[0].name == 'out1'
     with pytest.raises(ValueError):
-        Mapping(name='m', channel=17)
+        MidiMapping(name='m', channel=17)
 
 
 def test_decode():
@@ -124,12 +123,12 @@ def test_stable_port_name():
 
 def test_apply_opens_matching_ports_once():
     _midi.apply(settings())
-    out, inp = _midi._outputs['piano'], _midi._inputs['keys']
+    out, inp = _midi.handles[('piano', 'out1')], _midi.handles[('keys', 'in1')]
     assert out.opened == (1, 'piano')
     assert inp.opened == (1, 'keys')
     _midi.send_note('piano', 1, 60, 100)
     _midi.send_note('piano', 1, 60, 0)
-    assert _midi._outputs['piano'] is out  # same open port, not reopened per message
+    assert _midi.handles[('piano', 'out1')] is out  # same open port, not reopened per message
     assert out.messages == [[0x90, 60, 100], [0x80, 60, 0]]
 
 
@@ -138,20 +137,20 @@ def test_apply_reports_missing_port_and_disabled():
         {'name': 'gone', 'port': 'Nope', 'direction': 'out'},
         {'name': 'off', 'port': 'Digital Piano', 'enabled': False},
     ]))
-    assert _midi._outputs == {}
-    assert 'Nope' in _midi.errors[('out', 'gone')]
-    assert ('out', 'off') not in _midi.errors
+    assert _midi.handles == {}
+    assert 'Nope' in _midi.errors[('gone', 'out1')]
+    assert ('off', 'out1') not in _midi.errors
 
 
 def test_apply_reopens_on_port_change():
     _midi.apply(settings())
     _midi.apply(settings(connections=[{'name': 'piano', 'port': 'Midi Through'}]))
-    assert _midi._outputs['piano'].opened == (0, 'piano')
+    assert _midi.handles[('piano', 'out1')].opened == (0, 'piano')
 
 
 def test_virtual_port():
     _midi.apply(settings(connections=[{'name': 'sr', 'virtual': True, 'direction': 'in'}]))
-    assert _midi._inputs['sr'].opened == ('virtual', 'sr')
+    assert _midi.handles[('sr', 'in1')].opened == ('virtual', 'sr')
 
 
 def test_refresh_drops_and_reopens(monkeypatch):
@@ -159,12 +158,12 @@ def test_refresh_drops_and_reopens(monkeypatch):
     monkeypatch.setitem(PORTS, 'out', ['Midi Through:Midi Through Port-0 14:0',
                                        'ShowRunner:piano 130:0'])  # own port must not match
     _midi.refresh()
-    assert 'piano' not in _midi._outputs
-    assert _midi.errors[('out', 'piano')] == 'device disconnected'
+    assert ('piano', 'out1') not in _midi.handles
+    assert _midi.errors[('piano', 'out1')] == 'device disconnected'
     monkeypatch.setitem(PORTS, 'out', ['Digital Piano:Digital Piano MIDI 1 20:0'])
     _midi.refresh()
-    assert _midi._outputs['piano'].opened == (0, 'piano')
-    assert ('out', 'piano') not in _midi.errors
+    assert _midi.handles[('piano', 'out1')].opened == (0, 'piano')
+    assert ('piano', 'out1') not in _midi.errors
 
 
 def test_reconnect_and_apply_reuse_client(monkeypatch):
@@ -174,17 +173,17 @@ def test_reconnect_and_apply_reuse_client(monkeypatch):
         {'name': 'keys', 'port': 'Digital Piano', 'direction': 'in'},
         {'name': 'sr', 'virtual': True},
     ]))
-    out, keys, sr = _midi._outputs['piano'], _midi._inputs['keys'], _midi._outputs['sr']
+    out, keys, sr = _midi.handles[('piano', 'out1')], _midi.handles[('keys', 'in1')], _midi.handles[('sr', 'out1')]
     monkeypatch.setitem(PORTS, 'out', [])
     monkeypatch.setitem(PORTS, 'in', [])
     _midi.refresh()
     monkeypatch.setitem(PORTS, 'out', ['Digital Piano:Digital Piano MIDI 1 20:0'])
     monkeypatch.setitem(PORTS, 'in', ['Digital Piano:Digital Piano MIDI 1 20:0'])
     _midi.refresh()
-    assert _midi._outputs['piano'] is out and out.opened == (0, 'piano')
-    assert _midi._inputs['keys'] is keys and keys.callback is not None  # callback restored
+    assert _midi.handles[('piano', 'out1')] is out and out.opened == (0, 'piano')
+    assert _midi.handles[('keys', 'in1')] is keys and keys.callback is not None  # callback restored
     _midi.apply(_midi.settings)  # Save & apply
-    assert _midi._outputs['piano'] is out and _midi._outputs['sr'] is sr
+    assert _midi.handles[('piano', 'out1')] is out and _midi.handles[('sr', 'out1')] is sr
     assert sr.opened == ('virtual', 'sr')  # virtual port never closed
     _midi.apply(settings(connections=[{'name': 'piano', 'port': 'Digital Piano'}]))
     assert keys.deleted and sr.deleted and len(_midi._clients) == 1
@@ -205,7 +204,7 @@ def test_cc_mapping_and_panic():
         {'name': 'mute', 'connection': 'piano', 'type': 'cc', 'channel': 2, 'number': 7,
          'value': 0},
     ]))
-    out = _midi._outputs['piano']
+    out = _midi.handles[('piano', 'out1')]
     _midi.send_mapping('mute')
     assert out.messages == [[0xB1, 7, 0]]
     with pytest.raises(KeyError):
@@ -223,7 +222,7 @@ def test_send_unopened_raises():
 
 def test_plugin_commands_default_to_first_output():
     _midi.apply(settings(mappings=[{'name': 'mute', 'connection': 'piano', 'number': 7}]))
-    out = _midi._outputs['piano']
+    out = _midi.handles[('piano', 'out1')]
     p = ShowMidiPlugin()
     p.showrunner_command('midi.note', {'note': 62, 'velocity': 90, 'channel': 3})
     p.showrunner_command('midi.cc', {'control': 1, 'value': 5})
@@ -242,7 +241,7 @@ def test_incoming_dispatch_and_monitor():
         {'name': 'other-input', 'direction': 'in', 'connection': 'elsewhere', 'type': 'note',
          'number': 60, 'command': 'never'},
     ]))
-    keys = _midi._inputs['keys']
+    keys = _midi.handles[('keys', 'in1')]
     keys.receive([0x90, 60, 100])
     keys.receive([0x80, 60, 0])  # release: monitored, not dispatched
     hook = _midi._pm.hook.showrunner_command
@@ -257,11 +256,11 @@ def test_learn_captures_instead_of_dispatching():
         {'name': 'vol', 'direction': 'in', 'type': 'cc', 'number': 7, 'command': 'midi.panic'},
     ]))
     _midi.start_learn()
-    _midi._inputs['keys'].receive([0xB0, 7, 50])
+    _midi.handles[('keys', 'in1')].receive([0xB0, 7, 50])
     assert _midi.learned == {'type': 'cc', 'channel': 1, 'number': 7, 'value': 50,
-                             'connection': 'keys'}
+                             'connection': 'keys', 'port': 'in1'}
     _midi._pm.hook.showrunner_command.assert_not_called()
-    _midi._inputs['keys'].receive([0xB0, 7, 51])  # learn is one-shot
+    _midi.handles[('keys', 'in1')].receive([0xB0, 7, 51])  # learn is one-shot
     _midi._pm.hook.showrunner_command.assert_called_once()
 
 
@@ -273,21 +272,22 @@ def _config(showmidi):
 
 
 def test_toml_legacy_port_name():
-    s = _load_settings(_config({'port_name': 'Digital Piano MIDI 1'}), None)
-    assert s.connections == [Connection(name='default', port='Digital Piano MIDI 1')]
+    s = _midi.load_settings(_config({'port_name': 'Digital Piano MIDI 1'}), None)
+    assert s.connections == [
+        MidiConnection(name='default', ports=[{'port': 'Digital Piano MIDI 1'}])]
 
 
 def test_db_overrides_toml(db, monkeypatch):
-    monkeypatch.setattr(midi, 'get_db', lambda: db)
+    monkeypatch.setattr(connection, 'get_db', lambda: db)
     with db.session() as s:
         s.add(Show(name='Hamlet'))
         s.commit()
     toml = _config({'port_name': 'Midi Through'})
-    assert _load_settings(toml, 1).connections[0].name == 'default'
-    _save_settings(1, settings())
-    _save_settings(1, settings(auto_reconnect=True))  # update, not duplicate
-    assert _load_settings(toml, 1) == settings(auto_reconnect=True)
-    assert midi._first_show_id() == 1
+    assert _midi.load_settings(toml, 1).connections[0].name == 'default'
+    _midi.save_settings(1, settings())
+    _midi.save_settings(1, settings(auto_reconnect=True))  # update, not duplicate
+    assert _midi.load_settings(toml, 1) == settings(auto_reconnect=True)
+    assert connection.first_show_id() == 1
 
 
 def test_status():
