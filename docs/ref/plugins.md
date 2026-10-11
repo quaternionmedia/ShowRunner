@@ -98,3 +98,4 @@ value = 0                     # Velocity or CC value (0–127)
 - On Windows, closing an input whose device has gone fails and leaves the client half-closed. Such a client is retired and replaced by a fresh one on reconnect, instead of being reused.
 - A device unplugged and replugged within one interval goes unnoticed. The connection still reads `connected`, but its handle is stale and neither direction works until the device is next unplugged for longer than an interval. A shorter interval narrows that window.
 - Windows (WinMM) cannot create virtual ports.
+- To test hotplug on Windows, see [Testing MIDI hotplug](../cookbook/midi-hotplug.md).

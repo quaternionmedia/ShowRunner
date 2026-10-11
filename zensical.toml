@@ -35,6 +35,7 @@ nav = [
         "cookbook/plugins-lifecycle.md",
         "cookbook/api.md",
         "cookbook/tests.md",
+        "cookbook/midi-hotplug.md",
     ] },
     { "Reference" = [
         "ref/index.md",
