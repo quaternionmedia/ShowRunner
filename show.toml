@@ -42,3 +42,11 @@ file_format = "{time} | {level: <8} | {name} | {message}" # custom loguru file f
 [plugins.showmidi]
 # port = 0          # output port index
 port_name = "Digital Piano:Digital Piano MIDI 1"    # substring match; takes priority over index
+
+# [plugins.showosc]
+# [[plugins.showosc.connections]]
+# name = "console"
+# ports = [
+#   { name = "tx", direction = "out", address = "192.168.1.50", port = 8000 },
+#   { name = "rx", direction = "in",  address = "0.0.0.0",      port = 9000 },
+# ]
