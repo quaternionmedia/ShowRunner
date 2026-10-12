@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import math
 import threading
 from typing import Any, Literal
 
@@ -144,7 +145,9 @@ class OscClient:
 
 
 def _plain(arg: Any) -> Any:
-    """Make an OSC argument JSON-safe for the monitor (blobs, midi tuples ...)."""
+    """Make an OSC argument JSON-safe for the monitor (blobs, midi tuples, NaN ...)."""
+    if isinstance(arg, float) and not math.isfinite(arg):
+        return repr(arg)  # 'nan', 'inf', '-inf': JSON has no such numbers
     return arg if isinstance(arg, (bool, int, float, str, type(None))) else repr(arg)
 
 

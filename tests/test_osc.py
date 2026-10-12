@@ -299,6 +299,14 @@ def test_rest_status_and_monitor(api):
     assert api.get('/osc/monitor?after=99').json() == []
 
 
+def test_a_non_finite_float_does_not_break_the_monitor(api):
+    """JSON has no NaN or Infinity; the monitor names them instead."""
+    _osc.apply(settings())
+    _osc.handles[('desk', 'rx')].receive('/fader/1', float('nan'), float('inf'), float('-inf'))
+    r = api.get('/osc/monitor')
+    assert r.status_code == 200
+    assert r.json()[-1]['args'] == ['nan', 'inf', '-inf']
+
 def test_plugin_wiring():
     p = ShowOscPlugin()
     assert p.showrunner_get_nav()['path'] == '/osc'
