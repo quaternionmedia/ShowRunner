@@ -65,6 +65,11 @@ OSC_COMMANDS = ['osc.send', 'osc.mapping']
 # ---------------------------------------------------------------------------
 
 
+# An OSC argument is a value JSON can carry with an OSC type; a message takes one or a list.
+OscArg = bool | int | float | str
+OscArgs = OscArg | list[OscArg] | None
+
+
 class OscPort(Port):
     address: str = Field('127.0.0.1', min_length=1)  # out: destination host; in: bind address
     port: int = Field(8000, ge=1, le=65535)
@@ -84,7 +89,7 @@ class OscConnection(Connection):
 
 class OscMapping(Mapping):
     message: str = ''  # out: OSC address to send; in: glob to match ('' = any message)
-    args: Any = None  # out: one value or a list of values; None sends no arguments
+    args: OscArgs = None  # out: one value or a list of values; None sends no arguments
 
     @model_validator(mode='after')
     def _out_needs_address(self):
@@ -238,7 +243,7 @@ common_routes(router, _osc, 'ShowOSC', lambda: HAS_OSC)
 
 class OscSend(BaseModel):
     message: str = Field(..., pattern=r'^/')
-    args: Any = None
+    args: OscArgs = None
     connection: str | None = None
     port: str | None = None
 
@@ -258,6 +263,8 @@ async def post_send(body: OscSend):
         _osc.send(connection, body.message, body.args, body.port)
     except KeyError as e:
         raise HTTPException(404, str(e))
+    except Exception as e:  # every port it went to failed
+        raise HTTPException(502, str(e))
     return {'sent': body.message, 'args': _plain_args(body.args)}
 
 
@@ -268,6 +275,8 @@ async def post_mapping(mapping_name: str):
         _osc.send_mapping(mapping_name)
     except KeyError as e:
         raise HTTPException(404, str(e))
+    except Exception as e:
+        raise HTTPException(502, str(e))
     return {'sent': 'mapping', 'name': mapping_name}
 
 

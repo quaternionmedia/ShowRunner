@@ -339,6 +339,7 @@ class ConnectionManager:
             for key in keys:
                 try:
                     fn(key, self.handles[key])
+                    self.errors.pop(key, None)
                 except Exception as e:
                     self.errors[key] = str(e)
                     self.log('WARNING', key, f'send failed: {e}')

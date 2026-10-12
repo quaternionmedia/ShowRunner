@@ -125,7 +125,7 @@ Persistent OSC connections with incoming and outgoing message mappings, on the s
 | `POST` | `/osc/send` | Send a message | JSON `message` (starts with `/`), `args` (value or list, optional), `connection`, `port` (optional) |
 | `POST` | `/osc/send/{mapping}` | Send a named outgoing mapping | — |
 
-Errors: `400` no output connection configured, `404` unknown connection/port/mapping, `422` invalid body, `503` `python-osc` missing.
+Errors: `400` no output connection configured, `404` unknown connection/port/mapping, `422` invalid body (`args` is one value or a list of values: number, string or boolean), `502` the send failed on every port it went to, `503` `python-osc` missing.
 
 **Commands dispatched via `showrunner_command`:**
 

@@ -290,6 +290,29 @@ def test_rest_send_and_errors(api, monkeypatch):
     assert api.post('/osc/send', json={'message': '/x'}).status_code == 503
 
 
+def test_send_args_are_one_value_or_a_list_of_values(api):
+    """JSON objects and nested lists have no OSC type: they are refused, not mangled."""
+    _osc.apply(settings())
+    for bad in ({'level': 50}, [{'level': 50}], [[1]]):
+        assert api.post('/osc/send', json={'message': '/x', 'args': bad}).status_code == 422
+    assert sent('a') == []
+    with pytest.raises(ValueError):
+        OscMapping(name='m', message='/x', args={'level': 50})
+    r = api.post('/osc/send', json={'message': '/x', 'args': [1, 2.5, 'go', True]})
+    assert r.json() == {'sent': '/x', 'args': [1, 2.5, 'go', True]}
+    assert sent('a') == [('/x', [1, 2.5, 'go', True])]
+
+
+def test_a_failed_send_answers_502_and_its_port_error_clears_on_the_next_good_one(api):
+    _osc.apply(settings())
+    _osc.handles[('desk', 'a')]._client.send_message = MagicMock(side_effect=OSError('unreachable'))
+    r = api.post('/osc/send', json={'message': '/x', 'connection': 'desk', 'port': 'a'})
+    assert r.status_code == 502 and 'unreachable' in r.json()['detail']
+    assert _osc.errors[('desk', 'a')] == 'unreachable'
+    r = api.post('/osc/send', json={'message': '/y', 'connection': 'desk', 'port': 'a'})
+    assert r.status_code == 200
+    assert ('desk', 'a') not in _osc.errors
+
 def test_rest_status_and_monitor(api):
     _osc.apply(settings())
     _osc.send('desk', '/x')
