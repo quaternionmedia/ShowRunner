@@ -158,7 +158,8 @@ class OscManager(ConnectionManager):
             ),
             needs_reply_address=True,
         )
-        server = osc_server.ThreadingOSCUDPServer((port.address, port.port), disp)
+        # One thread per in-port, so its messages dispatch one at a time, in arrival order.
+        server = osc_server.BlockingOSCUDPServer((port.address, port.port), disp)
         threading.Thread(
             target=server.serve_forever, daemon=True, name=f'osc-in-{key[0]}-{key[1]}'
         ).start()

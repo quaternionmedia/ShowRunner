@@ -71,7 +71,7 @@ def fake_osc(monkeypatch):
     monkeypatch.setattr(osc, 'dispatcher', types.SimpleNamespace(Dispatcher=FakeDispatcher),
                         raising=False)
     monkeypatch.setattr(osc, 'osc_server',
-                        types.SimpleNamespace(ThreadingOSCUDPServer=FakeServer), raising=False)
+                        types.SimpleNamespace(BlockingOSCUDPServer=FakeServer), raising=False)
     _osc._pm = MagicMock()
     yield
     _osc.close_all()

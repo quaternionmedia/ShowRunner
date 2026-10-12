@@ -97,7 +97,7 @@ legacy `port_name` shorthand. Change: `MidiPort(Port)`, `MidiConnection(Connecti
 - `OscClient(address='127.0.0.1', port=8000, tcp=False)` (Eos-style, lazy `pythonosc` imports); `send(message, value=None)` uses `value is None`
   (Eos's truthiness check drops `0`, `""`, `[]`).
 - `OscPort(Port)`: `address`, `port` 1-65535, `protocol udp|tcp` (out only); `OscConnection(Connection)` holds `ports: list[OscPort]`. `OscMapping(Mapping)`: `message` starting with `/`, `args` (int/float/str/bool).
-- `OscManager(ConnectionManager)`: `open(conn, port)` builds an `OscClient` per out port (fan-out on send) or a `ThreadingOSCUDPServer` per in port on a daemon thread with
+- `OscManager(ConnectionManager)`: `open(conn, port)` builds an `OscClient` per out port (fan-out on send) or a `BlockingOSCUDPServer` per in port (one thread, so its messages dispatch in arrival order) on a daemon thread with
   `dispatcher.set_default_handler(..., needs_reply_address=True)` (in); `close` does `shutdown()` + `server_close()` + join;
   bind failures go to `errors`. `matches` uses `fnmatch` on `message`; `decode_payload` gives `{'args': [...], 'address': msg, 'mapping': name}`.
   - shortcut: receive is UDP only; add `ThreadingOSCTCPServer` (python-osc >= 1.9) when a console needs TCP in.
