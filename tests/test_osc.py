@@ -32,6 +32,11 @@ class FakeClient:
         self.closed = True
 
 
+class FakeDispatcher:
+    def set_default_handler(self, handler, needs_reply_address=False):
+        self.handler = handler
+
+
 class FakeServer:
     instances = []
 
@@ -52,8 +57,7 @@ class FakeServer:
 
     def receive(self, message, *args, host='10.0.0.2'):
         """Simulate python-osc calling the default handler (needs_reply_address)."""
-        handler = self.dispatcher._default_handler
-        handler.callback((host, 9999), message, *args)
+        self.dispatcher.handler((host, 9999), message, *args)
 
 
 @pytest.fixture(autouse=True)
@@ -63,6 +67,8 @@ def fake_osc(monkeypatch):
     monkeypatch.setattr(osc, 'udp_client', types.SimpleNamespace(SimpleUDPClient=FakeClient),
                         raising=False)
     monkeypatch.setattr(osc, 'tcp_client', types.SimpleNamespace(SimpleTCPClient=FakeClient),
+                        raising=False)
+    monkeypatch.setattr(osc, 'dispatcher', types.SimpleNamespace(Dispatcher=FakeDispatcher),
                         raising=False)
     monkeypatch.setattr(osc, 'osc_server',
                         types.SimpleNamespace(ThreadingOSCUDPServer=FakeServer), raising=False)
