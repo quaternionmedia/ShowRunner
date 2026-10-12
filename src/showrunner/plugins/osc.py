@@ -106,14 +106,20 @@ class ShowOscSettings(ConnectionSettings):
 class OscClient:
     """Tiny OSC sender. ``send('/path')`` sends no arguments; ``0`` and ``''`` are real values."""
 
+    timeout = 2.0  # seconds for a TCP connect or send (python-osc's default is 30)
+
     def __init__(self, address: str = '127.0.0.1', port: int = 8000, tcp: bool = False) -> None:
         self.address, self.port, self.tcp = address, port, tcp
         self._client: Any = None
 
     def connect(self) -> None:
         if self._client is None:
-            cls = tcp_client.SimpleTCPClient if self.tcp else udp_client.SimpleUDPClient
-            self._client = cls(self.address, self.port)
+            if self.tcp:
+                self._client = tcp_client.SimpleTCPClient(
+                    self.address, self.port, timeout=self.timeout
+                )
+            else:
+                self._client = udp_client.SimpleUDPClient(self.address, self.port)
 
     def send(self, message: str, value: Any = None) -> None:
         self.connect()

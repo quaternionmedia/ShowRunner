@@ -230,6 +230,33 @@ def test_apply_closes_an_input_without_holding_the_lock_its_dispatch_needs():
     assert not t.is_alive(), 'apply() deadlocked against the dispatch it was closing'
     assert FakeServer.instances[-1].dispatcher.strict_timing is False
 
+def test_a_slow_tcp_connect_does_not_hold_up_other_connections(monkeypatch):
+    """python-osc's TCP client connects in its constructor, which to an unreachable
+    console takes the whole timeout; sends on other connections must not wait for it."""
+    release = threading.Event()
+
+    class SlowConnect(FakeClient):
+        def __init__(self, address, port, **kw):
+            self.kw = kw
+            release.wait(5)
+            super().__init__(address, port, **kw)
+
+    monkeypatch.setattr(osc, 'tcp_client', types.SimpleNamespace(SimpleTCPClient=SlowConnect),
+                        raising=False)
+    s = settings(connections=[
+        {'name': 'fx', 'ports': [{'name': 'tx', 'port': 8000}]},
+        {'name': 'console', 'ports': [{'name': 'tx', 'port': 3032, 'protocol': 'tcp'}]}])
+    t = threading.Thread(target=_osc.apply, args=(s,), daemon=True)
+    t.start()
+    time.sleep(0.2)  # fx is open; console is connecting
+    t0 = time.monotonic()
+    _osc.send('fx', '/fx/go')
+    took = time.monotonic() - t0
+    release.set()
+    t.join(5)
+    assert took < 1, f'a send to fx waited {took:.1f}s on the console connect'
+    assert _osc.handles[('console', 'tx')]._client.kw == {'timeout': osc.OscClient.timeout}
+
 def test_learn_captures_message():
     _osc.apply(settings())
     _osc.start_learn()

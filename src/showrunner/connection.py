@@ -216,14 +216,18 @@ class ConnectionManager:
         return (connection, port) in self.handles
 
     def _try_open(self, conn: Connection, port: Port) -> bool:
+        """Open one port. Call without ``_lock``: opening can block (a TCP connect)."""
         key = (conn.name, port.name)
         try:
-            self.handles[key] = self.open(conn, port)
+            handle = self.open(conn, port)
         except Exception as e:
-            self.errors[key] = str(e)
+            with self._lock:
+                self.errors[key] = str(e)
             self.log('WARNING', key, f'{port.direction} port: {e}')
             return False
-        self.errors.pop(key, None)
+        with self._lock:
+            self.handles[key] = handle
+            self.errors.pop(key, None)
         self.log('INFO', key, f'{port.direction} port open')
         self._emit('connected', {'connection': conn.name, 'port': port.name})
         return True
@@ -249,13 +253,14 @@ class ConnectionManager:
             with self._lock:
                 self.settings = settings
                 self.errors = {}
-                for conn, port in settings.active_ports():
-                    self._try_open(conn, port)
+            for conn, port in settings.active_ports():
+                self._try_open(conn, port)
         self._update_thread()
 
     def refresh(self) -> None:
         """Drop ports whose device vanished; open ports whose device appeared."""
         gone: list[tuple[tuple[str, str], Any]] = []
+        appeared: list[tuple[Connection, Port]] = []
         with self._lifecycle:
             with self._lock:
                 for conn, port in self.settings.active_ports():
@@ -267,8 +272,10 @@ class ConnectionManager:
                         self.log('WARNING', key, 'disconnected')
                         self._emit('disconnected', {'connection': conn.name, 'port': port.name})
                     elif key not in self.handles and present:
-                        self._try_open(conn, port)
+                        appeared.append((conn, port))
             self._close(gone)
+            for conn, port in appeared:
+                self._try_open(conn, port)
 
     def close_all(self) -> None:
         self._stop_thread()
