@@ -1,5 +1,7 @@
 """Tests for the ShowOSC plugin, using fake pythonosc clients/servers (no sockets)."""
 
+import threading
+import time
 import types
 from unittest.mock import MagicMock
 
@@ -33,6 +35,9 @@ class FakeClient:
 
 
 class FakeDispatcher:
+    def __init__(self, strict_timing=True):
+        self.strict_timing = strict_timing
+
     def set_default_handler(self, handler, needs_reply_address=False):
         self.handler = handler
 
@@ -200,6 +205,30 @@ def test_an_incoming_mappings_data_wins_over_the_message():
     rx.receive('/showrunner/go', 1)
     rx.receive('/showrunner/fire')
     assert sent('a') == [('/eos/cue/1/fire', [1]), ('/eos/cue/1/fire', None)]
+
+def test_apply_closes_an_input_without_holding_the_lock_its_dispatch_needs():
+    """python-osc joins the message an input is dispatching when it closes; if that
+    dispatch sends, it needs the manager's lock, so apply() must not hold it then."""
+    s = settings(mappings=[{'name': 'relay', 'direction': 'in', 'message': '/remote/*',
+                            'command': 'osc.send', 'data': {'connection': 'desk', 'port': 'a'}}])
+    _osc.apply(s)
+    plugin, entered, done = ShowOscPlugin(), threading.Event(), threading.Event()
+
+    def slow_command(command_name, data):
+        entered.set()
+        time.sleep(0.2)
+        plugin.showrunner_command(command_name, data)
+
+    _osc._pm.hook.showrunner_command.side_effect = slow_command
+    rx = _osc.handles[('desk', 'rx')]
+    rx.server_close = lambda: done.wait(5)  # as python-osc's block_on_close join
+    threading.Thread(target=lambda: (rx.receive('/remote/go', 1), done.set()), daemon=True).start()
+    assert entered.wait(2)
+    t = threading.Thread(target=_osc.apply, args=(s,), daemon=True)
+    t.start()
+    t.join(3)
+    assert not t.is_alive(), 'apply() deadlocked against the dispatch it was closing'
+    assert FakeServer.instances[-1].dispatcher.strict_timing is False
 
 def test_learn_captures_message():
     _osc.apply(settings())

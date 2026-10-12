@@ -22,7 +22,7 @@ sr = "showrunner.cli:cli"
 admin = ["sqladmin>=0.20.1", "sqlalchemy[asyncio]>=2.0.54"]
 cli = ["typer>=0.24.1"]
 midi = ["python-rtmidi>=1.5"]
-osc = ["python-osc>=1.9"]
+osc = ["python-osc>=1.10.2"]
 pdf = ["fpdf2>=2.8.7"]
 all = [
     "showrunner[admin]",

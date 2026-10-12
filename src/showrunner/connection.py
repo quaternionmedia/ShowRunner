@@ -155,7 +155,10 @@ class ConnectionManager:
     toml_section = 'conn'  # [plugins.<toml_section>]
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock = threading.RLock()  # handles, errors, settings: held by every send
+        # apply/refresh/close_all one at a time. They close ports without holding _lock:
+        # closing an input waits for the message it is dispatching, which may need _lock.
+        self._lifecycle = threading.Lock()
         self.settings = self.settings_cls()
         self.show_id: int | None = None
         self.config: Any = None
@@ -225,46 +228,52 @@ class ConnectionManager:
         self._emit('connected', {'connection': conn.name, 'port': port.name})
         return True
 
-    def _close_handles(self) -> None:
-        for key, handle in list(self.handles.items()):
+    def _close(self, handles: list[tuple[tuple[str, str], Any]]) -> None:
+        """Close ``handles``, already taken out of ``self.handles``. Call without ``_lock``."""
+        for key, handle in handles:
             try:
                 self.close(key, handle)
             except Exception:
                 pass
-        self.handles.clear()
+
+    def _take_all(self) -> list[tuple[tuple[str, str], Any]]:
+        with self._lock:
+            taken, self.handles = list(self.handles.items()), {}
+        return taken
 
     def apply(self, settings: ConnectionSettings) -> None:
         """Close everything and reopen per ``settings`` (so edits always take effect)."""
-        with self._lock:
-            self._close_handles()
+        with self._lifecycle:
+            self._close(self._take_all())
             self.release(settings)
-            self.settings = settings
-            self.errors = {}
-            for conn, port in settings.active_ports():
-                self._try_open(conn, port)
+            with self._lock:
+                self.settings = settings
+                self.errors = {}
+                for conn, port in settings.active_ports():
+                    self._try_open(conn, port)
         self._update_thread()
 
     def refresh(self) -> None:
         """Drop ports whose device vanished; open ports whose device appeared."""
-        with self._lock:
-            for conn, port in self.settings.active_ports():
-                key = (conn.name, port.name)
-                present = self.present(conn, port)
-                if key in self.handles and not present:
-                    try:
-                        self.close(key, self.handles.pop(key))
-                    except Exception:
-                        pass
-                    self.errors[key] = 'device disconnected'
-                    self.log('WARNING', key, 'disconnected')
-                    self._emit('disconnected', {'connection': conn.name, 'port': port.name})
-                elif key not in self.handles and present:
-                    self._try_open(conn, port)
+        gone: list[tuple[tuple[str, str], Any]] = []
+        with self._lifecycle:
+            with self._lock:
+                for conn, port in self.settings.active_ports():
+                    key = (conn.name, port.name)
+                    present = self.present(conn, port)
+                    if key in self.handles and not present:
+                        gone.append((key, self.handles.pop(key)))
+                        self.errors[key] = 'device disconnected'
+                        self.log('WARNING', key, 'disconnected')
+                        self._emit('disconnected', {'connection': conn.name, 'port': port.name})
+                    elif key not in self.handles and present:
+                        self._try_open(conn, port)
+            self._close(gone)
 
     def close_all(self) -> None:
         self._stop_thread()
-        with self._lock:
-            self._close_handles()
+        with self._lifecycle:
+            self._close(self._take_all())
             self.release(None)
 
     def _update_thread(self) -> None:

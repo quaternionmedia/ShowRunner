@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10, <4.0"
 resolution-markers = [
     "python_full_version >= '3.11'",
@@ -2212,7 +2212,7 @@ requires-dist = [
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "nicegui", specifier = ">=2.0" },
     { name = "pluggy", specifier = ">=1.6.0" },
-    { name = "python-osc", marker = "extra == 'osc'", specifier = ">=1.9" },
+    { name = "python-osc", marker = "extra == 'osc'", specifier = ">=1.10.2" },
     { name = "python-rtmidi", marker = "extra == 'midi'", specifier = ">=1.5" },
     { name = "screenplay-tools", specifier = ">=0.0.10" },
     { name = "showrunner", extras = ["admin"], marker = "extra == 'all'" },

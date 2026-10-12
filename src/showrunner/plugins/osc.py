@@ -149,7 +149,9 @@ class OscManager(ConnectionManager):
             client = OscClient(port.address, port.port, port.protocol == 'tcp')
             client.connect()  # TCP fails here (not on first send) if the peer is down
             return client
-        disp = dispatcher.Dispatcher()
+        # Run a bundle's messages on arrival: strict timing parks the receive thread until
+        # the bundle's timetag, and closing the port then waits for it.
+        disp = dispatcher.Dispatcher(strict_timing=False)
         disp.set_default_handler(
             lambda host, message, *args: self.on_message(
                 key[0],

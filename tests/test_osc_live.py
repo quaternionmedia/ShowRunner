@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip('pythonosc')
 
-from pythonosc import udp_client  # noqa: E402
+from pythonosc import osc_bundle_builder, osc_message_builder, udp_client  # noqa: E402
 
 from showrunner.plugins.osc import OscManager, ShowOscSettings  # noqa: E402
 
@@ -37,7 +37,10 @@ def wait_for(predicate, timeout=5.0) -> bool:
 def manager():
     m = OscManager()
     yield m
-    m.close_all()
+    # Bounded, so a regression that hangs close_all() fails its test instead of the run.
+    t = threading.Thread(target=m.close_all, daemon=True)
+    t.start()
+    t.join(5)
 
 
 def on_command(manager, fn) -> None:
@@ -70,3 +73,23 @@ def test_one_input_runs_its_commands_one_at_a_time_in_arrival_order(manager):
     assert wait_for(lambda: len(order) == 50)
     assert order == list(range(50))
     assert peak[0] == 1
+
+
+def test_a_bundle_timed_for_later_runs_now_and_does_not_hold_the_port_open(manager):
+    """With python-osc's strict timing, a bundle stamped an hour ahead parks the receive
+    thread until then, and closing the port waits for it."""
+    got = []
+    on_command(manager, lambda command_name, data: got.append(data['message']))
+    rx = free_port()
+    manager.apply(ShowOscSettings(
+        connections=[{'name': 'desk', 'ports': [
+            {'name': 'rx', 'direction': 'in', 'address': '127.0.0.1', 'port': rx}]}],
+        mappings=[{'name': 'go', 'direction': 'in', 'command': 'stopper.go'}]))
+    bundle = osc_bundle_builder.OscBundleBuilder(time.time() + 3600)
+    bundle.add_content(osc_message_builder.OscMessageBuilder('/later').build())
+    udp_client.SimpleUDPClient('127.0.0.1', rx).send(bundle.build())
+    assert wait_for(lambda: got == ['/later'], timeout=2)
+    t = threading.Thread(target=manager.close_all, daemon=True)
+    t.start()
+    t.join(3)
+    assert not t.is_alive(), 'close_all() is waiting on a timed bundle'

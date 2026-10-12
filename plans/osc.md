@@ -113,7 +113,7 @@ legacy `port_name` shorthand. Change: `MidiPort(Port)`, `MidiConnection(Connecti
 - `src/showrunner/connection.py` (new), `src/showrunner/connection_ui.py` (new)
 - `src/showrunner/plugins/midi.py` (refactor onto the base)
 - `src/showrunner/plugins/osc.py` (new); `src/showrunner/plugins/__init__.py` (register `ShowOscPlugin`)
-- `pyproject.toml` + `uv.lock`: `osc = ["python-osc>=1.9"]`, add to `all`
+- `pyproject.toml` + `uv.lock`: `osc = ["python-osc>=1.10.2"]`, add to `all`
 - `show.toml`: commented `[plugins.showosc]` example only
 - `tests/test_connection.py` (new), `tests/test_midi.py` (renames only), `tests/test_osc.py` (new), `tests/test_plugins.py` (count 17 -> 18)
 - `docs/ref/plugins.md`: ShowOSC section, short "Connection plugins" section describing the base, MIDI section touched only for any renames

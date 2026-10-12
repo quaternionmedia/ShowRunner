@@ -113,7 +113,7 @@ Persistent OSC connections with incoming and outgoing message mappings, on the s
 | Route prefix | `/osc`                                                  |
 | Endpoints    | `GET /`, `GET /monitor`, `POST /send`, `POST /send/{mapping}` |
 | Nav entry    | Yes (`/osc`, icon: settings_input_antenna)              |
-| Dependencies | `python-osc>=1.9` (optional, `uv sync --extra osc`)     |
+| Dependencies | `python-osc>=1.10.2` (optional, `uv sync --extra osc`)  |
 | Config key   | `[plugins.showosc]` or DB `Config` (`osc.settings`)     |
 
 **REST endpoints:**
