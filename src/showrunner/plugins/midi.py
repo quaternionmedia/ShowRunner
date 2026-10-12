@@ -224,7 +224,9 @@ class MidiManager(ConnectionManager):
                     pass
 
     def present(self, conn: Connection, port: MidiPort) -> bool:
-        return port.virtual or self._find_port_index(port.port, port.direction) is not None
+        if port.virtual:  # no device behind it: apply() opens it, refresh() leaves it be
+            return (conn.name, port.name) in self.handles
+        return self._find_port_index(port.port, port.direction) is not None
 
     def matches(self, mapping: MidiMapping, msg: dict) -> bool:
         if (mapping.type, mapping.channel, mapping.number) != (

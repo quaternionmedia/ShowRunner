@@ -153,6 +153,22 @@ def test_virtual_port():
     assert _midi.handles[('sr', 'in1')].opened == ('virtual', 'sr')
 
 
+def test_refresh_leaves_a_virtual_port_alone(monkeypatch):
+    """Windows MultiMedia cannot create virtual ports; as on main, refresh does not retry
+    one (a warning every reconnect interval) or drop one (it has no device to vanish)."""
+    tries = []
+
+    def no_virtual(self, name=None):
+        tries.append(name)
+        raise RuntimeError('Virtual ports are not supported by the Windows MultiMedia API.')
+
+    monkeypatch.setattr(FakePort, 'open_virtual_port', no_virtual)
+    _midi.apply(settings(connections=[{'name': 'sr', 'virtual': True, 'direction': 'out'}]))
+    _midi.refresh()
+    _midi.refresh()
+    assert tries == ['sr']
+    assert 'Virtual ports' in _midi.errors[('sr', 'out1')]
+
 def test_refresh_drops_and_reopens(monkeypatch):
     _midi.apply(settings())
     monkeypatch.setitem(PORTS, 'out', ['Midi Through:Midi Through Port-0 14:0',
