@@ -123,11 +123,18 @@ class OscClient:
 
     def send(self, message: str, value: Any = None) -> None:
         self.connect()
-        self._client.send_message(message, value)  # value None -> no args (checked `is None`)
+        try:
+            self._client.send_message(message, value)  # value None -> no args (`is None`)
+        except OSError:
+            self.close()  # a TCP peer that went away is reconnected on the next send
+            raise
 
     def close(self) -> None:
         if self._client is not None and self.tcp:
-            self._client.close()
+            try:
+                self._client.close()
+            except OSError:
+                pass
         self._client = None
 
 

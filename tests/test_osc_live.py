@@ -5,6 +5,7 @@ threads and timeouts; these tests run the real ones.
 """
 
 import socket
+import struct
 import threading
 import time
 import types
@@ -93,3 +94,50 @@ def test_a_bundle_timed_for_later_runs_now_and_does_not_hold_the_port_open(manag
     t.start()
     t.join(3)
     assert not t.is_alive(), 'close_all() is waiting on a timed bundle'
+
+
+class Peer:
+    """A TCP OSC receiver that can drop its connection and come back on the same port."""
+
+    def __init__(self, port: int) -> None:
+        self.port, self.data, self.conn = port, b'', None
+        self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(('127.0.0.1', port))
+        self.srv.listen()
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        try:
+            self.conn, _ = self.srv.accept()
+            while chunk := self.conn.recv(1024):
+                self.data += chunk
+        except OSError:
+            pass
+
+    def stop(self) -> None:
+        """Reset the connection (linger 0 sends RST) and stop listening."""
+        if self.conn is not None:
+            self.conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+            self.conn.close()
+        self.srv.close()
+
+
+def test_a_tcp_peer_that_restarts_is_reached_again_on_the_next_send(manager):
+    port = free_port(socket.SOCK_STREAM)
+    peer = Peer(port)
+    manager.apply(ShowOscSettings(connections=[{'name': 'qlab', 'ports': [
+        {'name': 'tx', 'address': '127.0.0.1', 'port': port, 'protocol': 'tcp'}]}]))
+    manager.send('qlab', '/first')
+    assert wait_for(lambda: b'/first' in peer.data)
+    peer.stop()
+    with pytest.raises(OSError):
+        for _ in range(20):  # the first send after a reset can still be accepted locally
+            manager.send('qlab', '/lost')
+            time.sleep(0.05)
+    peer = Peer(port)
+    try:
+        manager.send('qlab', '/again')
+        assert wait_for(lambda: b'/again' in peer.data)
+    finally:
+        peer.stop()
