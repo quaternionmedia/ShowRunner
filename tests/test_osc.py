@@ -185,6 +185,22 @@ def test_incoming_dispatch_glob_and_monitor():
         'in', 'desk', 'rx', '10.0.0.2')
 
 
+def test_an_incoming_mappings_data_wins_over_the_message():
+    """A relay sends what its mapping says; the message only fills what the data leaves out."""
+    _osc.apply(settings(mappings=[
+        {'name': 'go', 'connection': 'desk', 'port': 'a', 'message': '/eos/cue/1/fire'},
+        {'name': 'relay', 'direction': 'in', 'message': '/showrunner/go', 'command': 'osc.send',
+         'data': {'connection': 'desk', 'port': 'a', 'message': '/eos/cue/1/fire'}},
+        {'name': 'fire-go', 'direction': 'in', 'message': '/showrunner/fire',
+         'command': 'osc.mapping', 'data': {'mapping': 'go'}},
+    ]))
+    plugin = ShowOscPlugin()
+    _osc._pm.hook.showrunner_command.side_effect = plugin.showrunner_command
+    rx = _osc.handles[('desk', 'rx')]
+    rx.receive('/showrunner/go', 1)
+    rx.receive('/showrunner/fire')
+    assert sent('a') == [('/eos/cue/1/fire', [1]), ('/eos/cue/1/fire', None)]
+
 def test_learn_captures_message():
     _osc.apply(settings())
     _osc.start_learn()

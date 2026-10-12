@@ -368,7 +368,7 @@ class ConnectionManager:
                 continue
             if not self.matches(m, msg):
                 continue
-            data = {**m.data, **self.payload(msg), 'mapping': m.name}
+            data = {'mapping': m.name, **self.payload(msg), **m.data}
             logger.info(f"{self.protocol.upper()} '{m.name}' -> {m.command} {data}")
             try:
                 self._pm.hook.showrunner_command(command_name=m.command, data=data)
