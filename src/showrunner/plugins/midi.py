@@ -1,42 +1,44 @@
 """ShowMidi - persistent MIDI connections with incoming/outgoing mappings.
 
-* Connections stay open (one rtmidi client per connection, named ``ShowRunner``).
-  A connection either attaches to a system port (substring match) or creates a
-  *virtual* ``ShowRunner:<name>`` port that other apps can patch to.
-* Outgoing mappings are named messages (``midi.send``); incoming mappings turn
-  a received Note On / CC into a ``showrunner_command`` call.
-* Settings live per show in the DB ``Config`` table (key ``midi.settings``),
-  falling back to ``[plugins.showmidi]`` in show.toml. Edit them at ``/midi``.
+Built on :mod:`showrunner.connection`: a *connection* is a named client with any mix of
+in/out *ports*. Each port is its own rtmidi client (named ``ShowRunner``) that either
+attaches to a system port (substring match) or creates a *virtual* port that other apps
+can patch to. Outgoing mappings are named messages (``midi.send``); incoming mappings
+turn a received Note On / CC into a ``showrunner_command`` call.
+
+Settings live per show in the DB ``Config`` table (key ``midi.settings``), falling back
+to ``[plugins.showmidi]`` in show.toml. Edit them at ``/midi``.
 
 show.toml fallback::
 
     [plugins.showmidi]
-    port_name = "Digital Piano MIDI 1"   # shorthand: one output called "default"
-    # or, in full:
     auto_reconnect = true
-    connections = [
-      { name = "piano", port = "Digital Piano MIDI 1", direction = "out" },
-      { name = "pedal", port = "Digital Piano MIDI 1", direction = "in" },
+
+    [[plugins.showmidi.connections]]
+    name = "piano"
+    ports = [
+      { name = "out", direction = "out", port = "Digital Piano MIDI 1" },
+      { name = "in",  direction = "in",  port = "Digital Piano MIDI 1" },
     ]
-    mappings = [
-      { name = "mute", connection = "piano", type = "cc", number = 7, value = 0 },
-      { name = "panic", direction = "in", type = "cc", number = 64, command = "midi.panic" },
-    ]
+
+    [[plugins.showmidi.mappings]]
+    name = "mute"
+    connection = "piano"
+    type = "cc"
+    number = 7
+    value = 0
+
+The older flat form (``{name, port, direction}`` entries, ``port_name = "..."``) is still read.
 """
 
 from __future__ import annotations
 
-import json
 import re
-import threading
-import time
-from collections import deque
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
-from pydantic import BaseModel, Field, ValidationError, model_validator
-from sqlmodel import select
+from pydantic import Field, model_validator
 
 try:
     import rtmidi
@@ -45,14 +47,19 @@ try:
 except ImportError:
     HAS_RTMIDI = False
 
-import showrunner
-from showrunner.models import Config, Show
-from showrunner.plugin import ShowRunnerPlugin
-from showrunner.plugins.db import get_db
+from showrunner.connection import (
+    Connection,
+    ConnectionManager,
+    ConnectionPlugin,
+    ConnectionSettings,
+    Mapping,
+    Port,
+    common_routes,
+)
+from showrunner.connection_ui import ConnectionPage
 
 router = APIRouter(prefix='/midi', tags=['ShowMidi'])
 CLIENT_NAME = 'ShowRunner'
-SETTINGS_KEY = 'midi.settings'
 MIDI_COMMANDS = ['midi.send', 'midi.panic', 'midi.note', 'midi.cc']
 
 
@@ -61,37 +68,38 @@ MIDI_COMMANDS = ['midi.send', 'midi.panic', 'midi.note', 'midi.cc']
 # ---------------------------------------------------------------------------
 
 
-class Connection(BaseModel):
-    name: str = Field(..., min_length=1, max_length=64)
+class MidiPort(Port):
     port: str = ''  # substring of the system port name; unused when virtual
-    direction: Literal['in', 'out'] = 'out'
     virtual: bool = False
-    enabled: bool = True
 
     @model_validator(mode='after')
     def _port_required(self):
         if not self.virtual and not self.port.strip():
-            raise ValueError(f"connection '{self.name}' needs a port (or virtual = true)")
+            raise ValueError('a MIDI port needs a system port name (or virtual = true)')
         return self
 
 
-class Mapping(BaseModel):
-    name: str = Field(..., min_length=1, max_length=64)
-    direction: Literal['in', 'out'] = 'out'
-    connection: str = ''  # incoming: '' matches any input
+class MidiConnection(Connection):
+    ports: list[MidiPort] = Field(..., min_length=1)
+
+
+class MidiMapping(Mapping):
     type: Literal['note', 'cc'] = 'cc'
     channel: int = Field(1, ge=1, le=16)
     number: int = Field(0, ge=0, le=127)
     value: int = Field(127, ge=0, le=127)  # outgoing velocity / CC value
-    command: str = ''  # incoming: command to dispatch
-    data: dict[str, Any] = Field(default_factory=dict)
 
 
-class ShowMidiSettings(BaseModel):
-    auto_reconnect: bool = True
-    reconnect_interval: float = Field(2.0, gt=0, lt=60)
-    connections: list[Connection] = Field(default_factory=list)
-    mappings: list[Mapping] = Field(default_factory=list)
+class ShowMidiSettings(ConnectionSettings):
+    connections: list[MidiConnection] = Field(default_factory=list)
+    mappings: list[MidiMapping] = Field(default_factory=list)
+
+    @classmethod
+    def upgrade(cls, data: dict) -> dict:
+        legacy = data.pop('port_name', None)  # shorthand: one output called "default"
+        if legacy and not data.get('connections'):
+            data['connections'] = [{'name': 'default', 'port': str(legacy), 'direction': 'out'}]
+        return data
 
 
 def decode(msg: list[int]) -> dict | None:
@@ -118,29 +126,19 @@ def stable_port_name(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-class MidiManager:
-    """Holds open MIDI ports keyed by connection name and dispatches input."""
+class MidiManager(ConnectionManager):
+    protocol = 'midi'
+    settings_cls = ShowMidiSettings
+    settings_key = 'midi.settings'
+    toml_section = 'showmidi'
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._outputs: dict[str, Any] = {}
-        self._inputs: dict[str, Any] = {}
-        # one rtmidi object (= one ALSA client) per connection, reused across reconnects
-        self._clients: dict[tuple[str, str, bool], Any] = {}  # (direction, name, virtual)
+        super().__init__()
+        # one rtmidi object (= one ALSA client) per port, reused across reconnects
+        self._clients: dict[tuple[str, str, str, bool], Any] = {}  # (conn, port, dir, virtual)
         self._probe: dict[str, Any] = {}  # direction -> client used for listing ports
         # clients whose close_port() failed: never reused, closed or deleted again
         self._retired: list[Any] = []
-        self.settings = ShowMidiSettings()
-        self.show_id: int | None = None
-        self.config: Any = None
-        self.errors: dict[tuple[str, str], str] = {}  # (direction, name) -> reason
-        self._pm: Any = None
-        self.monitor: deque = deque(maxlen=200)
-        self.seq = 0
-        self.learn_until = 0.0
-        self.learned: dict | None = None
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
 
     # -- ports --------------------------------------------------------------
 
@@ -159,149 +157,111 @@ class MidiManager:
                 return i
         return None
 
-    def is_open(self, direction: str, name: str) -> bool:
-        return name in (self._outputs if direction == 'out' else self._inputs)
+    @staticmethod
+    def _label(conn: Connection, port: MidiPort) -> str:
+        """Name shown in other apps: the connection name, plus the port when ambiguous."""
+        same = sum(p.direction == port.direction for p in conn.ports)
+        return conn.name if same == 1 else f'{conn.name}-{port.name}'
 
-    def _open(self, conn: Connection) -> None:
-        key = (conn.direction, conn.name, conn.virtual)
+    # -- ConnectionManager hooks --------------------------------------------
+
+    def open(self, conn: Connection, port: MidiPort) -> Any:
+        key = (conn.name, port.name, port.direction, port.virtual)
         if key not in self._clients:
-            cls = rtmidi.MidiOut if conn.direction == 'out' else rtmidi.MidiIn
+            cls = rtmidi.MidiOut if port.direction == 'out' else rtmidi.MidiIn
             self._clients[key] = cls(name=CLIENT_NAME)
-        port = self._clients[key]
-        if conn.virtual:
-            if not port.is_port_open():  # rtmidi can't reopen a virtual port; keep it open
-                port.open_virtual_port(conn.name)
+        client = self._clients[key]
+        label = self._label(conn, port)
+        if port.virtual:
+            if not client.is_port_open():  # rtmidi can't reopen a virtual port; keep it open
+                client.open_virtual_port(label)
         else:
-            idx = self._find_port_index(conn.port, conn.direction)
+            idx = self._find_port_index(port.port, port.direction)
             if idx is None:
-                raise ValueError(f"no {conn.direction}put port matching '{conn.port}'")
-            port.open_port(idx, name=conn.name)
-        if conn.direction == 'in':
-            port.set_callback(self._on_message, conn.name)  # close_port cancels it
-            self._inputs[conn.name] = port
-        else:
-            self._outputs[conn.name] = port
+                raise ValueError(f"no {port.direction}put port matching '{port.port}'")
+            client.open_port(idx, name=label)
+        if port.direction == 'in':
+            client.set_callback(self._on_midi, (conn.name, port.name))  # close_port cancels it
+        return client
 
-    def _try_open(self, conn: Connection) -> bool:
-        key = (conn.direction, conn.name)
-        try:
-            self._open(conn)
-        except Exception as e:
-            self.errors[key] = str(e)
-            logger.warning(f"MIDI {conn.direction} '{conn.name}': {e}")
-            return False
-        self.errors.pop(key, None)
-        logger.info(f"MIDI {conn.direction} '{conn.name}' open ({conn.port or 'virtual'})")
-        return True
-
-    def _detach(self, key: tuple[str, str, bool]) -> bool:
-        """``close_port()`` the client for ``key``; retire it if that fails.
+    def _detach(self, ckey: tuple[str, str, str, bool]) -> bool:
+        """``close_port()`` the client for ``ckey``; retire it if that fails.
 
         python-rtmidi 1.5.8 bundles RtMidi 5.0.0, whose WinMM input ``closePort()`` fails
         once the device has vanished and leaves the object half-closed: reopening it is a
         silent no-op, and closing it again (``close_port``, ``delete`` or the destructor)
-        corrupts the heap. Such a client is dropped from ``_clients``, so ``_open`` makes a
+        corrupts the heap. Such a client is dropped from ``_clients``, so ``open`` makes a
         fresh one, and kept referenced so its destructor never runs.
         """
-        port = self._clients.get(key)
-        if port is None:
+        client = self._clients.get(ckey)
+        if client is None:
             return False
         try:
-            port.close_port()
+            client.close_port()
         except Exception as e:
-            self._retired.append(self._clients.pop(key))
-            logger.warning(f"MIDI {key[0]} '{key[1]}': close failed, client retired ({e})")
+            self._retired.append(self._clients.pop(ckey))
+            logger.warning(f'MIDI {ckey[0]}/{ckey[1]}: close failed, client retired ({e})')
             return False
         return True
 
-    def _close_ports(self, keep: set | frozenset = frozenset()) -> None:
-        """Detach real ports; delete clients whose key isn't in ``keep``."""
-        for key in list(self._clients):
-            if key not in keep:
-                if self._detach(key):
-                    try:
-                        self._clients.pop(key).delete()
-                    except Exception:
-                        pass
-            elif not key[2]:  # real port: detach, _open reattaches (port may have changed)
-                self._detach(key)
-        self._outputs.clear()
-        self._inputs.clear()
+    def close(self, key: tuple[str, str], handle: Any) -> None:
+        # real ports detach (open() reattaches; the device may have changed); virtual stay open
+        for ckey, client in list(self._clients.items()):
+            if client is handle and not ckey[3]:
+                self._detach(ckey)
 
-    # -- lifecycle ----------------------------------------------------------
+    def release(self, settings: ConnectionSettings | None) -> None:
+        keep = (
+            {(c.name, p.name, p.direction, p.virtual) for c, p in settings.active_ports()}
+            if settings
+            else set()
+        )
+        for ckey in list(self._clients):
+            if ckey not in keep and self._detach(ckey):
+                try:
+                    self._clients.pop(ckey).delete()
+                except Exception:
+                    pass
 
-    def apply(self, settings: ShowMidiSettings) -> None:
-        """Close everything and reopen per ``settings`` (so edits always take effect)."""
-        with self._lock:
-            self._close_ports(
-                keep={(c.direction, c.name, c.virtual) for c in settings.connections if c.enabled}
-            )
-            self.settings = settings
-            self.errors = {}
-            for conn in settings.connections:
-                if conn.enabled:
-                    self._try_open(conn)
-        self._update_thread()
+    def present(self, conn: Connection, port: MidiPort) -> bool:
+        if port.virtual:  # no device behind it: apply() opens it, refresh() leaves it be
+            return (conn.name, port.name) in self.handles
+        return self._find_port_index(port.port, port.direction) is not None
 
-    def refresh(self) -> None:
-        """Drop ports whose device vanished; open ports whose device appeared."""
-        with self._lock:
-            for conn in self.settings.connections:
-                if not conn.enabled or conn.virtual:
-                    continue
-                opened = self._outputs if conn.direction == 'out' else self._inputs
-                present = self._find_port_index(conn.port, conn.direction) is not None
-                if conn.name in opened and not present:
-                    opened.pop(conn.name)
-                    self._detach((conn.direction, conn.name, conn.virtual))
-                    self.errors[(conn.direction, conn.name)] = 'device disconnected'
-                    logger.warning(f"MIDI {conn.direction} '{conn.name}' disconnected")
-                elif conn.name not in opened and present:
-                    self._try_open(conn)
+    def matches(self, mapping: MidiMapping, msg: dict) -> bool:
+        if (mapping.type, mapping.channel, mapping.number) != (
+            msg['type'],
+            msg['channel'],
+            msg['number'],
+        ):
+            return False
+        return not (mapping.type == 'note' and msg['value'] == 0)  # press only, not release
 
-    def close_all(self) -> None:
-        self._stop_thread()
-        with self._lock:
-            self._close_ports()
+    def payload(self, msg: dict) -> dict:
+        return {'value': msg['value']}
 
-    def _update_thread(self) -> None:
-        if not self.settings.auto_reconnect:
-            self._stop_thread()
-        elif not (self._thread and self._thread.is_alive()):
-            self._stop.clear()
-            self._thread = threading.Thread(
-                target=self._reconnect_loop, daemon=True, name='midi-reconnect'
-            )
-            self._thread.start()
+    def describe(self, msg: dict) -> str:
+        t, ch, n, v = msg['type'].upper(), msg['channel'], msg['number'], msg['value']
+        return f'{t:<4} ch{ch:<2} #{n:<3} = {v}'
 
-    def _stop_thread(self) -> None:
-        self._stop.set()
-        if self._thread and self._thread is not threading.current_thread():
-            self._thread.join(timeout=5)
-        self._thread = None
-
-    def _reconnect_loop(self) -> None:
-        while not self._stop.wait(self.settings.reconnect_interval):
-            try:
-                self.refresh()
-            except Exception as e:
-                logger.warning(f'MIDI reconnect: {e}')
+    def _on_midi(self, event: tuple, data: tuple[str, str]) -> None:
+        """rtmidi callback (runs on rtmidi's thread)."""
+        msg = decode(event[0])
+        if msg is not None:
+            self.on_message(data[0], data[1], msg)
 
     # -- output -------------------------------------------------------------
 
-    def send(self, connection: str, msg: list[int]) -> None:
-        with self._lock:
-            if connection not in self._outputs:
-                raise KeyError(f"MIDI output '{connection}' is not open")
-            self._outputs[connection].send_message(msg)
+    def _send(self, connection: str, msg: list[int], port: str | None = None) -> None:
+        self.fan_out(connection, lambda key, h: h.send_message(msg), port)
 
-    def send_note(self, connection: str, channel: int, note: int, velocity: int) -> None:
+    def send_note(self, connection: str, channel: int, note: int, velocity: int, port=None):
         # shortcut: no duration_ms auto Note Off, add a threading.Timer when cues need timed notes
         kind = 0x90 if velocity > 0 else 0x80
-        self.send(connection, [kind | (channel - 1) & 0x0F, note & 0x7F, velocity & 0x7F])
+        self._send(connection, [kind | (channel - 1) & 0x0F, note & 0x7F, velocity & 0x7F], port)
 
-    def send_cc(self, connection: str, channel: int, control: int, value: int) -> None:
-        self.send(connection, [0xB0 | (channel - 1) & 0x0F, control & 0x7F, value & 0x7F])
+    def send_cc(self, connection: str, channel: int, control: int, value: int, port=None):
+        self._send(connection, [0xB0 | (channel - 1) & 0x0F, control & 0x7F, value & 0x7F], port)
 
     def send_mapping(self, name: str) -> None:
         m = next(
@@ -311,139 +271,22 @@ class MidiManager:
         if m is None:
             raise KeyError(f"no outgoing mapping named '{name}'")
         send = self.send_note if m.type == 'note' else self.send_cc
-        send(m.connection, m.channel, m.number, m.value)
-
-    def default_output(self) -> str | None:
-        return next(
-            (c.name for c in self.settings.connections if c.direction == 'out' and c.enabled),
-            None,
-        )
+        send(m.connection, m.channel, m.number, m.value, m.port or None)
 
     def panic(self) -> None:
         """All Notes Off (CC 123) + All Sound Off (CC 120) on every channel and output."""
         with self._lock:
-            for out in self._outputs.values():
-                for ch in range(16):
-                    out.send_message([0xB0 | ch, 123, 0])
-                    out.send_message([0xB0 | ch, 120, 0])
+            for c, p in self.settings.active_ports():
+                out = self.handles.get((c.name, p.name))
+                if p.direction == 'out' and out is not None:
+                    for ch in range(16):
+                        out.send_message([0xB0 | ch, 123, 0])
+                        out.send_message([0xB0 | ch, 120, 0])
         logger.info('MIDI panic sent')
-
-    # -- input --------------------------------------------------------------
-
-    def start_learn(self, timeout: float = 10.0) -> None:
-        """Capture the next incoming message into ``learned`` instead of dispatching it."""
-        self.learned = None
-        self.learn_until = time.monotonic() + timeout
-
-    def _on_message(self, event: tuple, conn_name: str) -> None:
-        """rtmidi callback (runs on rtmidi's thread)."""
-        msg = decode(event[0])
-        if msg is None:
-            return
-        msg['connection'] = conn_name
-        self.seq += 1
-        self.monitor.append({**msg, 'seq': self.seq})
-        if time.monotonic() < self.learn_until:
-            self.learn_until = 0.0
-            self.learned = msg
-            return
-        self.dispatch(msg)
-
-    def dispatch(self, msg: dict) -> None:
-        if self._pm is None:
-            return
-        for m in self.settings.mappings:
-            if m.direction != 'in' or not m.command:
-                continue
-            if (m.type, m.channel, m.number) != (msg['type'], msg['channel'], msg['number']):
-                continue
-            if m.connection and m.connection != msg.get('connection'):
-                continue
-            if m.type == 'note' and msg['value'] == 0:
-                continue  # fire notes on press only, not release
-            data = {**m.data, 'value': msg['value'], 'mapping': m.name}
-            logger.info(f"MIDI '{m.name}' -> {m.command} {data}")
-            try:
-                self._pm.hook.showrunner_command(command_name=m.command, data=data)
-            except Exception:
-                logger.exception(f'MIDI dispatch of {m.command} failed')
-
-    def get_status(self) -> dict:
-        return {
-            'show_id': self.show_id,
-            'connections': [
-                {
-                    'name': c.name,
-                    'direction': c.direction,
-                    'enabled': c.enabled,
-                    'open': self.is_open(c.direction, c.name),
-                    'error': self.errors.get((c.direction, c.name)),
-                }
-                for c in self.settings.connections
-            ],
-        }
 
 
 _midi = MidiManager()
-
-
-# ---------------------------------------------------------------------------
-# Settings persistence
-# ---------------------------------------------------------------------------
-
-
-def _toml_settings(config: Any) -> dict:
-    cfg = dict(config.plugins.settings.get('showmidi', {})) if config is not None else {}
-    legacy = cfg.pop('port_name', None)
-    if legacy and not cfg.get('connections'):
-        cfg['connections'] = [{'name': 'default', 'port': str(legacy), 'direction': 'out'}]
-    return cfg
-
-
-def _load_settings(config: Any, show_id: int | None) -> ShowMidiSettings:
-    """Per-show DB settings, else show.toml ``[plugins.showmidi]``, else empty."""
-    if show_id is not None:
-        try:
-            with get_db().session() as s:
-                row = s.exec(
-                    select(Config).where(Config.show_id == show_id, Config.key == SETTINGS_KEY)
-                ).first()
-            if row and row.value:
-                return ShowMidiSettings.model_validate_json(row.value)
-        except Exception as e:
-            logger.warning(f'MIDI settings for show {show_id} unreadable, using show.toml: {e}')
-    try:
-        return ShowMidiSettings(**_toml_settings(config))
-    except ValidationError as e:
-        logger.warning(f'Invalid [plugins.showmidi] in show.toml: {e}')
-        return ShowMidiSettings()
-
-
-def _save_settings(show_id: int, settings: ShowMidiSettings) -> None:
-    with get_db().session() as s:
-        row = s.exec(
-            select(Config).where(Config.show_id == show_id, Config.key == SETTINGS_KEY)
-        ).first()
-        if row is None:
-            row = Config(show_id=show_id, key=SETTINGS_KEY)
-        row.value = settings.model_dump_json()
-        s.add(row)
-        s.commit()
-
-
-def activate(show_id: int | None) -> None:
-    """Load and apply the settings for ``show_id``."""
-    _midi.show_id = show_id
-    _midi.apply(_load_settings(_midi.config, show_id))
-
-
-def _first_show_id() -> int | None:
-    """Same default as the UI header: first show by name."""
-    try:
-        with get_db().session() as s:
-            return s.exec(select(Show.id).order_by(Show.name)).first()
-    except Exception:
-        return None
+common_routes(router, _midi, 'ShowMidi', lambda: HAS_RTMIDI)
 
 
 # ---------------------------------------------------------------------------
@@ -463,11 +306,6 @@ def _out(connection: str | None) -> str:
     return connection
 
 
-@router.get('/')
-async def index():
-    return {'plugin': 'ShowMidi', 'rtmidi_installed': HAS_RTMIDI, **_midi.get_status()}
-
-
 @router.get('/ports')
 async def list_ports():
     _require_rtmidi()
@@ -480,10 +318,11 @@ async def post_note(
     note: int = Query(60, ge=0, le=127),
     velocity: int = Query(127, ge=0, le=127),
     connection: str | None = None,
+    port: str | None = None,
 ):
     _require_rtmidi()
     try:
-        _midi.send_note(_out(connection), channel, note, velocity)
+        _midi.send_note(_out(connection), channel, note, velocity, port)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return {'sent': 'note', 'channel': channel, 'note': note, 'velocity': velocity}
@@ -495,10 +334,11 @@ async def post_cc(
     control: int = Query(7, ge=0, le=127),
     value: int = Query(0, ge=0, le=127),
     connection: str | None = None,
+    port: str | None = None,
 ):
     _require_rtmidi()
     try:
-        _midi.send_cc(_out(connection), channel, control, value)
+        _midi.send_cc(_out(connection), channel, control, value, port)
     except KeyError as e:
         raise HTTPException(404, str(e))
     return {'sent': 'cc', 'channel': channel, 'control': control, 'value': value}
@@ -522,343 +362,120 @@ async def post_panic():
 
 
 # ---------------------------------------------------------------------------
-# Plugin
-# ---------------------------------------------------------------------------
-
-
-class ShowMidiPlugin(ShowRunnerPlugin):
-    """Persistent MIDI I/O. Commands: ``midi.note``, ``midi.cc``, ``midi.send``, ``midi.panic``."""
-
-    @showrunner.hookimpl
-    def showrunner_register(self) -> dict:
-        return {
-            'name': 'ShowMidi',
-            'description': 'Persistent MIDI connections with incoming/outgoing mappings',
-            'version': '0.2.0',
-        }
-
-    @showrunner.hookimpl
-    def showrunner_startup(self, app) -> None:
-        super().showrunner_startup(app)
-        if not HAS_RTMIDI:
-            logger.warning('python-rtmidi not installed: MIDI disabled (uv sync --extra midi)')
-            return
-        _midi._pm = app.pm
-        _midi.config = getattr(app, 'config', None)
-        activate(getattr(_midi.config, 'current_show', None) or _first_show_id())
-        _build_page()
-
-    @showrunner.hookimpl
-    def showrunner_shutdown(self, app) -> None:
-        _midi.close_all()
-        super().showrunner_shutdown(app)
-
-    @showrunner.hookimpl
-    def showrunner_config_changed(self, config, previous_config) -> None:
-        if not HAS_RTMIDI:
-            return
-        _midi.config = config
-        settings = _load_settings(config, _midi.show_id)
-        if settings != _midi.settings:  # don't bounce open ports on unrelated edits
-            _midi.apply(settings)
-
-    @showrunner.hookimpl
-    def showrunner_command(self, command_name: str, data: dict | None) -> None:
-        if not HAS_RTMIDI or not command_name.startswith('midi.'):
-            return
-        d = data or {}
-        try:
-            if command_name == 'midi.note':
-                _midi.send_note(
-                    d.get('connection') or _midi.default_output(),
-                    int(d.get('channel', 1)), int(d.get('note', 60)), int(d.get('velocity', 127)),
-                )
-            elif command_name == 'midi.cc':
-                _midi.send_cc(
-                    d.get('connection') or _midi.default_output(),
-                    int(d.get('channel', 1)), int(d.get('control', 7)), int(d.get('value', 0)),
-                )
-            elif command_name == 'midi.send':
-                _midi.send_mapping(d['mapping'])
-            elif command_name == 'midi.panic':
-                _midi.panic()
-        except Exception as e:
-            logger.warning(f'{command_name} failed: {e}')
-
-    @showrunner.hookimpl
-    def showrunner_get_routes(self):
-        return router
-
-    @showrunner.hookimpl
-    def showrunner_get_commands(self) -> list:
-        return []
-
-    @showrunner.hookimpl
-    def showrunner_get_nav(self):
-        return {'label': 'MIDI', 'path': '/midi', 'icon': 'piano', 'order': 30}
-
-    @showrunner.hookimpl
-    def showrunner_get_status(self):
-        if not HAS_RTMIDI:
-            return None
-        enabled = [c for c in _midi.settings.connections if c.enabled]
-        if not enabled:
-            return {'icon': 'piano', 'tooltip': 'MIDI: no connections', 'color': 'grey',
-                    'path': '/midi'}
-        n = sum(_midi.is_open(c.direction, c.name) for c in enabled)
-        color = 'green' if n == len(enabled) else 'amber' if n else 'red'
-        return {'icon': 'piano', 'tooltip': f'MIDI: {n}/{len(enabled)} connected',
-                'color': color, 'path': '/midi'}
-
-
-# ---------------------------------------------------------------------------
 # /midi page
 # ---------------------------------------------------------------------------
 
 
-def _build_page() -> None:
-    from nicegui import ui
+class MidiPage(ConnectionPage):
+    path = '/midi'
+    title = 'MIDI'
+    mapping_cls = MidiMapping
+    commands = MIDI_COMMANDS
+    port_defaults = {'port': '', 'virtual': False}
+    mapping_defaults = {'type': 'cc', 'channel': 1, 'number': 0, 'value': 127}
 
-    from showrunner.ui import _current_show_id, header
+    def _port_options(self, direction: str, current: str) -> list[str]:
+        from nicegui import ui
 
-    @ui.page('/midi')
-    def midi_page():
-        ui.dark_mode(True)
-        header()
+        try:
+            names = [
+                stable_port_name(p)
+                for p in _midi.ports(direction)
+                if not p.startswith(f'{CLIENT_NAME}:')
+            ]
+        except Exception as e:
+            ui.notify(f'Cannot list MIDI ports: {e}', type='negative')
+            names = []
+        return list(dict.fromkeys([current, *names] if current else names))
 
-        show_id = _current_show_id()
-        if show_id != _midi.show_id:
-            activate(show_id)  # follow the show selected in the header
-        draft = _midi.settings.model_dump()
-        status_labels: dict[tuple[str, str], Any] = {}
-        learning: dict = {'mapping': None}
+    def port_fields(self, p: dict, refresh) -> None:
+        from nicegui import ui
 
-        def setter(d: dict, key: str, cast=None, then=None):
-            def handler(e):
-                d[key] = cast(e.value) if cast and e.value is not None else e.value
-                if then is not None:
-                    then.refresh()
-            return handler
+        ui.select(self._port_options(p['direction'], p['port']), label='System port',
+                  value=p['port'] or None, with_input=True, new_value_mode='add-unique',
+                  on_change=lambda e: p.update(port=e.value or '')
+                  ).classes('grow').props('disable' if p['virtual'] else '')
+        ui.checkbox('Virtual', value=p['virtual'],
+                    on_change=lambda e: (p.update(virtual=e.value), refresh.refresh())
+                    ).tooltip(f'Create a {CLIENT_NAME}:<name> port instead')
 
-        def port_options(direction: str, current: str) -> list[str]:
-            try:
-                names = [
-                    stable_port_name(p) for p in _midi.ports(direction)
-                    if not p.startswith(f'{CLIENT_NAME}:')
-                ]
-            except Exception as e:
-                ui.notify(f'Cannot list MIDI ports: {e}', type='negative')
-                names = []
-            return list(dict.fromkeys([current, *names] if current else names))
+    def mapping_fields(self, mp: dict, incoming: bool, refresh) -> None:
+        from nicegui import ui
 
-        def save():
-            try:
-                settings = ShowMidiSettings.model_validate(draft)
-            except ValidationError as e:
-                err = e.errors()[0]
-                ui.notify(f"Invalid: {err['msg']}", type='negative', multi_line=True)
-                return
-            names = [(c.direction, c.name) for c in settings.connections]
-            if len(names) != len(set(names)):
-                ui.notify('Connection names must be unique per direction', type='negative')
-                return
-            if show_id is not None:
-                _save_settings(show_id, settings)
-            _midi.apply(settings)
-            failed = [f'{n}: {err}' for (_, n), err in _midi.errors.items()]
-            if failed:
-                ui.notify('Saved, but: ' + '; '.join(failed), type='warning', multi_line=True)
-            else:
-                ui.notify('Saved and connected', type='positive')
+        def set_(key, cast=None):
+            return lambda e: mp.update({key: cast(e.value) if cast and e.value is not None
+                                        else e.value})
 
-        def test(m: dict):
-            try:
-                mapping = Mapping.model_validate(m)
-                if mapping.direction == 'in':
-                    if not mapping.command:
-                        ui.notify('Set a command first', type='warning')
-                        return
-                    data = {**mapping.data, 'value': 127, 'mapping': mapping.name}
-                    _midi._pm.hook.showrunner_command(command_name=mapping.command, data=data)
-                    ui.notify(f'Fired {mapping.command}')
-                elif mapping.type == 'note':
-                    _midi.send_note(mapping.connection, mapping.channel, mapping.number,
-                                    mapping.value or 127)
-                    ui.timer(0.5, lambda: _midi.send_note(
-                        mapping.connection, mapping.channel, mapping.number, 0), once=True)
-                else:
-                    _midi.send_cc(mapping.connection, mapping.channel, mapping.number,
-                                  mapping.value)
-            except (ValidationError, KeyError) as e:
-                ui.notify(f'{e} (save first?)', type='negative')
+        ui.select({'note': 'Note', 'cc': 'CC'}, label='Type', value=mp['type'],
+                  on_change=set_('type')).classes('w-20')
+        ui.number('Ch', value=mp['channel'], min=1, max=16, precision=0,
+                  on_change=set_('channel', int)).classes('w-16')
+        ui.number('Number', value=mp['number'], min=0, max=127, precision=0,
+                  on_change=set_('number', int)).classes('w-20')
+        if not incoming:
+            ui.number('Value', value=mp['value'], min=0, max=127, precision=0,
+                      on_change=set_('value', int)).classes('w-20')
 
-        def learn(m: dict):
-            learning['mapping'] = m
-            _midi.start_learn(timeout=10)
-            ui.notify('Learning: send a note or move a control (10 s)')
+    def test_out(self, m: MidiMapping) -> None:
+        from nicegui import ui
 
-        with ui.column().classes('w-full max-w-7xl mx-auto p-4 gap-4'):
-            if not HAS_RTMIDI:
-                ui.label('python-rtmidi is not installed (uv sync --extra midi)').classes(
-                    'text-red text-lg')
-                return
+        port = m.port or None
+        if m.type == 'note':
+            _midi.send_note(m.connection, m.channel, m.number, m.value or 127, port)
+            ui.timer(0.5, lambda: _midi.send_note(m.connection, m.channel, m.number, 0, port),
+                     once=True)
+        else:
+            _midi.send_cc(m.connection, m.channel, m.number, m.value, port)
 
-            with ui.row().classes('w-full items-center gap-4'):
-                ui.label('MIDI').classes('text-h5')
-                ui.label(f'show #{show_id}' if show_id else 'no show: changes not persisted'
-                         ).classes('text-grey')
-                ui.space()
-                ui.switch('Auto-reconnect', value=draft['auto_reconnect'],
-                          on_change=setter(draft, 'auto_reconnect'))
-                ui.button('Save & apply', icon='save', on_click=save).props('color=primary')
-                ui.button('PANIC', icon='front_hand', on_click=lambda: (
-                    _midi.panic(), ui.notify('Panic sent'))).props('color=negative')
+    def test_payload(self, m: MidiMapping) -> dict:
+        return {'value': 127}
 
-            # -- connections --
-            with ui.card().classes('w-full'):
-                with ui.row().classes('w-full items-center'):
-                    ui.label('Connections').classes('text-h6')
-                    ui.space()
-                    ui.button(icon='refresh', on_click=lambda: connections.refresh()).props(
-                        'flat round').tooltip('Rescan ports')
+    def apply_learned(self, mp: dict, msg: dict) -> None:
+        mp.update(type=msg['type'], channel=msg['channel'], number=msg['number'],
+                  connection=msg['connection'])
 
-                @ui.refreshable
-                def connections():
-                    status_labels.clear()
-                    for c in draft['connections']:
-                        with ui.row().classes('w-full items-center gap-2 no-wrap'):
-                            ui.input('Name', value=c['name'],
-                                     on_change=setter(c, 'name')).classes('w-32')
-                            ui.select({'out': 'Output', 'in': 'Input'}, label='Direction',
-                                      value=c['direction'],
-                                      on_change=setter(c, 'direction', then=connections)
-                                      ).classes('w-28')
-                            ui.select(port_options(c['direction'], c['port']), label='Port',
-                                      value=c['port'] or None, with_input=True,
-                                      new_value_mode='add-unique',
-                                      on_change=setter(c, 'port', cast=str)
-                                      ).classes('grow').props(
-                                          'disable' if c['virtual'] else '')
-                            ui.checkbox('Virtual', value=c['virtual'],
-                                        on_change=setter(c, 'virtual', then=connections)
-                                        ).tooltip(f'Create a {CLIENT_NAME}:<name> port instead')
-                            ui.switch('On', value=c['enabled'], on_change=setter(c, 'enabled'))
-                            status_labels[(c['direction'], c['name'])] = ui.label().classes(
-                                'w-48 text-sm')
-                            ui.button(icon='delete', on_click=lambda c=c: (
-                                draft['connections'].remove(c), connections.refresh(),
-                                mappings.refresh())).props('flat round dense')
-                    ui.button('Add connection', icon='add', on_click=lambda: (
-                        draft['connections'].append({
-                            'name': f"midi{len(draft['connections']) + 1}", 'port': '',
-                            'direction': 'out', 'virtual': False, 'enabled': True}),
-                        connections.refresh(), mappings.refresh())).props('flat')
+    def toolbar(self) -> None:
+        from nicegui import ui
 
-                connections()
-
-            # -- mappings --
-            with ui.card().classes('w-full'):
-                ui.label('Mappings').classes('text-h6')
-                ui.label('Send: named messages for midi.send / cues.  '
-                         'Receive: incoming Note On or CC fires a command.'
-                         ).classes('text-sm text-grey')
-
-                @ui.refreshable
-                def mappings():
-                    for m in draft['mappings']:
-                        incoming = m['direction'] == 'in'
-                        names = [c['name'] for c in draft['connections']
-                                 if c['direction'] == m['direction']]
-                        conn_opts = {'': 'Any input'} if incoming else {}
-                        conn_opts |= {n: n for n in names}
-                        conn_opts.setdefault(m['connection'], m['connection'] or '(none)')
-                        with ui.row().classes('w-full items-center gap-2 no-wrap'):
-                            ui.input('Name', value=m['name'],
-                                     on_change=setter(m, 'name')).classes('w-32')
-                            ui.select({'out': 'Send', 'in': 'Receive'}, label='Direction',
-                                      value=m['direction'],
-                                      on_change=setter(m, 'direction', then=mappings)
-                                      ).classes('w-28')
-                            ui.select(conn_opts, label='Connection', value=m['connection'],
-                                      on_change=setter(m, 'connection')).classes('w-32')
-                            ui.select({'note': 'Note', 'cc': 'CC'}, label='Type', value=m['type'],
-                                      on_change=setter(m, 'type')).classes('w-20')
-                            ui.number('Ch', value=m['channel'], min=1, max=16, precision=0,
-                                      on_change=setter(m, 'channel', int)).classes('w-16')
-                            ui.number('Number', value=m['number'], min=0, max=127, precision=0,
-                                      on_change=setter(m, 'number', int)).classes('w-20')
-                            if incoming:
-                                ui.input('Command', value=m['command'],
-                                         autocomplete=MIDI_COMMANDS,
-                                         on_change=setter(m, 'command')).classes('w-36')
-                                ui.input('Data (JSON)',
-                                         value=json.dumps(m['data']) if m['data'] else '',
-                                         validation={'Invalid JSON': _valid_json},
-                                         on_change=lambda e, m=m: _set_json(m, e.value)
-                                         ).classes('grow')
-                                ui.button('Learn', icon='hearing',
-                                          on_click=lambda m=m: learn(m)).props('flat dense')
-                            else:
-                                ui.number('Value', value=m['value'], min=0, max=127,
-                                          precision=0, on_change=setter(m, 'value', int)
-                                          ).classes('w-20')
-                                ui.space()
-                            ui.button('Test', icon='play_arrow',
-                                      on_click=lambda m=m: test(m)).props('flat dense')
-                            ui.button(icon='delete', on_click=lambda m=m: (
-                                draft['mappings'].remove(m), mappings.refresh())
-                                ).props('flat round dense')
-                    with ui.row():
-                        for direction, label in (('out', 'Add send'), ('in', 'Add receive')):
-                            ui.button(label, icon='add', on_click=lambda d=direction: (
-                                draft['mappings'].append({
-                                    'name': f"map{len(draft['mappings']) + 1}",
-                                    'direction': d, 'connection': '', 'type': 'cc',
-                                    'channel': 1, 'number': 0, 'value': 127,
-                                    'command': '', 'data': {}}),
-                                mappings.refresh())).props('flat')
-
-                mappings()
-
-            # -- monitor --
-            with ui.card().classes('w-full'):
-                ui.label('Incoming monitor').classes('text-h6')
-                log = ui.log(max_lines=200).classes('w-full h-48 font-mono text-xs')
-
-        last = {'seq': 0}
-
-        def tick():
-            for e in _midi.monitor.copy():  # deque.copy is atomic vs. the rtmidi thread
-                if e['seq'] > last['seq']:
-                    last['seq'] = e['seq']
-                    log.push(f"{e['connection']:<12} {e['type'].upper():<4} ch{e['channel']:<2} "
-                             f"#{e['number']:<3} = {e['value']}")
-            if learning['mapping'] is not None and _midi.learned:
-                msg, m = _midi.learned, learning['mapping']
-                _midi.learned, learning['mapping'] = None, None
-                m.update(type=msg['type'], channel=msg['channel'], number=msg['number'],
-                         connection=msg['connection'])
-                mappings.refresh()
-                ui.notify(f"Learned {msg['type'].upper()} ch{msg['channel']} #{msg['number']}")
-            for (direction, name), label in status_labels.items():
-                err = _midi.errors.get((direction, name))
-                if _midi.is_open(direction, name):
-                    label.set_text('● connected')
-                    label.classes(replace='w-48 text-sm text-green')
-                else:
-                    label.set_text(f'○ {err or "not applied"}')
-                    label.classes(replace='w-48 text-sm text-red' if err else 'w-48 text-sm')
-
-        ui.timer(0.2, tick)
+        ui.button('PANIC', icon='front_hand',
+                  on_click=lambda: (_midi.panic(), ui.notify('Panic sent'))).props('color=negative')
 
 
-def _valid_json(text: str) -> bool:
-    try:
-        return not text or isinstance(json.loads(text), dict)
-    except ValueError:
-        return False
+# ---------------------------------------------------------------------------
+# Plugin
+# ---------------------------------------------------------------------------
 
 
-def _set_json(m: dict, text: str) -> None:
-    if _valid_json(text):
-        m['data'] = json.loads(text) if text else {}
+class ShowMidiPlugin(ConnectionPlugin):
+    """Persistent MIDI I/O. Commands: ``midi.note``, ``midi.cc``, ``midi.send``, ``midi.panic``."""
+
+    protocol = 'midi'
+    label = 'ShowMidi'
+    description = 'Persistent MIDI connections with incoming/outgoing mappings'
+    version = '0.2.0'
+    nav_label = 'MIDI'
+    icon = 'piano'
+    nav_order = 30
+    manager = _midi
+    router = router
+    page_cls = MidiPage
+
+    def backend_available(self) -> bool:
+        return HAS_RTMIDI
+
+    def install_hint(self) -> str:
+        return 'python-rtmidi is not installed (uv sync --extra midi)'
+
+    def handle_command(self, command_name: str, d: dict) -> None:
+        conn = d.get('connection') or _midi.default_output()
+        port = d.get('port')
+        if command_name == 'midi.note':
+            _midi.send_note(conn, int(d.get('channel', 1)), int(d.get('note', 60)),
+                            int(d.get('velocity', 127)), port)
+        elif command_name == 'midi.cc':
+            _midi.send_cc(conn, int(d.get('channel', 1)), int(d.get('control', 7)),
+                          int(d.get('value', 0)), port)
+        elif command_name == 'midi.send':
+            _midi.send_mapping(d['mapping'])
+        elif command_name == 'midi.panic':
+            _midi.panic()

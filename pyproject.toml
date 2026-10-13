@@ -1,6 +1,6 @@
 [project]
 name = "showrunner"
-version = "0.3.0"
+version = "0.4.0"
 description = "A collection of tools for live performances including script parsing, cue management, and more."
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -22,11 +22,13 @@ sr = "showrunner.cli:cli"
 admin = ["sqladmin>=0.20.1", "sqlalchemy[asyncio]>=2.0.54"]
 cli = ["typer>=0.24.1"]
 midi = ["python-rtmidi>=1.5"]
+osc = ["python-osc>=1.10.2"]
 pdf = ["fpdf2>=2.8.7"]
 all = [
     "showrunner[admin]",
     "showrunner[cli]",
     "showrunner[midi]",
+    "showrunner[osc]",
     "showrunner[pdf]",
 ]
 
