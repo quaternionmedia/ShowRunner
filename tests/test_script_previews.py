@@ -1,7 +1,11 @@
 """Script viewer preview helpers."""
 
-from showrunner.plugins.scripter import _carried_cue, _get_previews
+import pluggy
+
+import showrunner
 from showrunner import ui as sr_ui
+from showrunner.hookspecs import ShowRunnerSpec
+from showrunner.plugins.scripter import _carried_cue, _get_previews
 
 
 def cue(id, line, char=0):
@@ -16,20 +20,57 @@ def test_carried_cue_is_last_preview_cue_before_page():
 
 
 def test_get_previews_merges_plugins_and_survives_errors(monkeypatch):
-    class Hook:
-        def __init__(self, results):
-            self.results = results
-
+    class Good:
+        @showrunner.hookimpl
         def showrunner_script_previews(self, cues):
-            if isinstance(self.results, Exception):
-                raise self.results
-            return self.results
+            return {1: [{'text': 'a'}]}
 
-    class PM:
-        def __init__(self, results):
-            self.hook = Hook(results)
+    class Broken:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            raise RuntimeError('boom')
 
-    monkeypatch.setattr(sr_ui, '_pm', PM([{1: [{'text': 'a'}]}, None, {2: [{'text': 'b'}]}]))
-    assert set(_get_previews([cue(1, 1)])) == {1, 2}
-    monkeypatch.setattr(sr_ui, '_pm', PM(RuntimeError('boom')))
-    assert _get_previews([cue(1, 1)]) == {}
+    class Other:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            return {1: [{'text': 'b'}], 2: [{'text': 'c'}]}
+
+    pm = pluggy.PluginManager('showrunner')
+    pm.add_hookspecs(ShowRunnerSpec)
+    for plugin in (Good(), Broken(), Other()):
+        pm.register(plugin)
+    monkeypatch.setattr(sr_ui, '_pm', pm)
+
+    previews = _get_previews([cue(1, 1), cue(2, 2)])
+    assert [c['text'] for c in previews[1]] == ['a', 'b']  # same cue from two plugins: merged
+    assert [c['text'] for c in previews[2]] == ['c']  # broken plugin skipped, others still run
+    assert _get_previews([]) == {}
+
+
+def test_load_cues_scopes_to_one_list_or_all_and_survives_deleted_list(db, monkeypatch):
+    import showrunner.plugins.db as db_module
+    from showrunner.models import Cue, CueList, Show
+    from showrunner.plugins.scripter import _load_cues
+
+    monkeypatch.setattr(db_module, '_db', db)
+    with db.session() as s:
+        s.add(Show(name='Hamlet'))
+        s.commit()
+        s.add(CueList(show_id=1, name='Main'))
+        s.add(CueList(show_id=1, name='TheatreMix'))
+        s.commit()
+        s.add(Cue(cue_list_id=1, number=1, name='a', layer='Lights'))
+        s.add(Cue(cue_list_id=2, number=2, name='b', layer='Mix'))
+        s.commit()
+
+    assert _load_cues(None) == []
+    assert _load_cues(999) == []  # list deleted after it was chosen: no crash
+    assert [c['name'] for c in _load_cues(1)] == ['a']
+    assert [c['name'] for c in _load_cues(1, all_lists=True)] == ['a', 'b']
+
+
+def test_preview_text_colour_must_be_a_plain_colour_name():
+    from showrunner.layers import is_color
+
+    assert is_color('amber') and is_color('deep-purple')
+    assert not is_color('red" onmouseover="x') and not is_color(None)

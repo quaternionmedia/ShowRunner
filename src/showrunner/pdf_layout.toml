@@ -129,10 +129,6 @@ padding = 1.5                # inner padding (mm) between border and content
 background = [255, 255, 255] # background fill colour (R, G, B 0-255)
 background-opacity = 0.5     # background opacity (0.0 transparent – 1.0 opaque)
 
-# Per-layer colours (R, G, B 0-255)
+# Layer colours come from each show's layers (`sr layers`). Add
+# `Name = [R, G, B]` below to override one layer's colour in this template.
 [cues.colors]
-Lights = [255, 165, 0] # orange
-Sound = [50, 100, 255] # blue
-Video = [160, 32, 240] # purple
-Audio = [0, 200, 200]  # cyan
-Stage = [0, 180, 0]    # green

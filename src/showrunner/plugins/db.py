@@ -14,12 +14,21 @@ from sqlmodel import select
 
 import showrunner
 from showrunner.database import ShowDatabase
-from showrunner.models import CUE_ORDER, Actor, Config, Cue, CueList, CueLog, Show
+from showrunner.layers import (
+    add_layer,
+    delete_layer,
+    ensure_layers,
+    get_layer_types,
+    get_layers,
+    update_layer,
+)
+from showrunner.models import CUE_ORDER, Actor, Config, Cue, CueList, CueLog, Layer, Show
 
 router = APIRouter(prefix='/db', tags=['ShowDB'])
 
 # Module-level reference set during startup so routes can access the database.
 _db: ShowDatabase | None = None
+_pm = None  # pluggy PluginManager, for layer-type lookups
 
 
 def get_db() -> ShowDatabase:
@@ -64,6 +73,7 @@ async def create_show(name: str, venue: str | None = None):
         show = Show(name=name, venue=venue)
         s.add(show)
         s.commit()
+        ensure_layers(s, show.id, _pm)  # commits; refresh after it
         s.refresh(show)
         return show.model_dump()
 
@@ -115,6 +125,70 @@ async def list_config(show_id: int):
         return {c.key: c.value for c in configs}
 
 
+@router.get('/layer-types')
+async def list_layer_types():
+    """Return the layer type registry (built-in and plugin types)."""
+    return list(get_layer_types(_pm).values())
+
+
+@router.get('/shows/{show_id}/layers')
+async def list_layers(show_id: int):
+    """Return a show's layers in order."""
+    with _db.session() as s:
+        if s.get(Show, show_id) is None:
+            raise HTTPException(status_code=404, detail='Show not found')
+        return get_layers(s, show_id, _pm)
+
+
+@router.post('/shows/{show_id}/layers')
+async def create_layer(show_id: int, name: str, type: str, color: str = 'grey'):
+    """Add a layer to a show. Unknown type or colour, or a duplicate name, is a 422."""
+    with _db.session() as s:
+        if s.get(Show, show_id) is None:
+            raise HTTPException(status_code=404, detail='Show not found')
+        try:
+            layer = add_layer(s, show_id, name, type, color, _pm)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color}
+
+
+@router.put('/layers/{layer_id}')
+async def change_layer(
+    layer_id: int,
+    name: str | None = None,
+    type: str | None = None,
+    color: str | None = None,
+    sequence: int | None = None,
+):
+    """Change a layer. A rename also renames the cues that use it."""
+    changes = {k: v for k, v in dict(name=name, type=type, color=color, sequence=sequence).items()
+               if v is not None}
+    with _db.session() as s:
+        layer = s.get(Layer, layer_id)
+        if layer is None:
+            raise HTTPException(status_code=404, detail='Layer not found')
+        try:
+            layer = update_layer(s, layer, _pm, **changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color}
+
+
+@router.delete('/layers/{layer_id}')
+async def remove_layer(layer_id: int):
+    """Delete a layer. Refused with 409 while cues still use it."""
+    with _db.session() as s:
+        layer = s.get(Layer, layer_id)
+        if layer is None:
+            raise HTTPException(status_code=404, detail='Layer not found')
+        try:
+            delete_layer(s, layer)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {'deleted': layer_id}
+
+
 # ---------------------------------------------------------------------------
 # Plugin class
 # ---------------------------------------------------------------------------
@@ -140,6 +214,11 @@ class ShowDBPlugin:
         db_echo = config.database.echo if config else False
         _db = ShowDatabase(db_path=db_path, echo=db_echo)
         _db.create_schema()
+        global _pm
+        _pm = getattr(app, 'pm', None)
+        with _db.session() as s:
+            for show in s.exec(select(Show)).all():
+                ensure_layers(s, show.id, _pm)
         # Store on the app so other plugins can access it
         app.db = _db
 

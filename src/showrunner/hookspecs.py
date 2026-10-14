@@ -119,6 +119,29 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_get_layer_types(self) -> dict | list[dict] | None:
+        """Register cue layer backend types.
+
+        Each entry is a dict with keys:
+            type: Unique key stored in ``layers.type`` (e.g. "mix")
+            label: Display name (e.g. "Mix")
+            description: Short description shown in the layer type picker
+            color: Default Quasar colour for new layers of this type
+
+        The first registration of a type wins; duplicates are logged and ignored.
+        A plugin that owns a type acts on cues whose layer has that type.
+        """
+
+    @hookspec
+    def showrunner_get_layers(self) -> dict | list[dict] | None:
+        """Provide layers to add to every show that does not already have them.
+
+        Each entry is a dict with keys ``name``, ``color`` (Quasar colour) and
+        ``type`` (must be registered via ``showrunner_get_layer_types``). Existing
+        layers are never changed; entries with an unknown type are skipped.
+        """
+
+    @hookspec
     def showrunner_script_previews(self, cues: list[dict]) -> dict[int, list[dict]] | None:
         """Return preview chips for cues shown in the script viewer.
 

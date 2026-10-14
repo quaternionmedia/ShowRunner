@@ -26,6 +26,7 @@ from sqlmodel import select
 
 
 import showrunner
+from showrunner.layers import COLOR_RGB, get_layers
 from showrunner.models import CUE_ORDER, Cue, CueList, Script
 from showrunner.plugins.db import get_db
 
@@ -114,11 +115,12 @@ def _element_style(layout: dict, element_type: ElementType) -> dict[str, Any]:
     return {**defaults, **style}
 
 
-def _cue_color(layout: dict, layer: str) -> tuple[int, int, int]:
-    """Return (R, G, B) for a cue layer from the layout config."""
-    colors = layout.get('cues', {}).get('colors', {})
-    rgb = colors.get(layer, [128, 128, 128])
-    return (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+def _cue_color(layout: dict, layer: str, layer_colors: dict[str, str]) -> tuple[int, int, int]:
+    """(R, G, B) for a cue layer: the layout's ``[cues.colors]`` override, else the layer colour."""
+    override = layout.get('cues', {}).get('colors', {}).get(layer)
+    if override is not None:
+        return (int(override[0]), int(override[1]), int(override[2]))
+    return COLOR_RGB.get(layer_colors.get(layer, 'grey'), COLOR_RGB['grey'])
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +137,7 @@ def generate_pdf(
     script: Script,
     cues: list[Cue],
     layout: dict[str, Any],
+    layer_colors: dict[str, str],
 ) -> bytes:
     """Render *script* with *cues* to PDF bytes using *layout* settings."""
 
@@ -273,6 +276,7 @@ def generate_pdf(
             cue_size,
             cue_space,
             layout,
+            layer_colors,
         )
         pdf.set_y(saved_y)
 
@@ -365,6 +369,7 @@ def _draw_cue_annotations(
     size: float,
     space: float,
     layout: dict,
+    layer_colors: dict[str, str],
 ) -> None:
     """Draw cue badge annotations in the right margin beside an element."""
     relevant: list[Cue] = []
@@ -394,9 +399,9 @@ def _draw_cue_annotations(
     y = y_top
 
     for cue in relevant:
-        layer = cue.layer or 'Lights'
-        r, g, b = _cue_color(layout, layer)
-        label = f'{layer[0]}{cue.number_label}'
+        layer = cue.layer or ''
+        r, g, b = _cue_color(layout, layer, layer_colors)
+        label = f'{layer[:1]}{cue.number_label}'
 
         # Measure the badge.
         pdf.set_font(badge_font_name, badge_font_style, size)
@@ -518,6 +523,7 @@ async def export_script_pdf(
             .where(Cue.cue_list_id == cue_list_id)
             .order_by(*CUE_ORDER)
         ).all()
+        layer_colors = {r['name']: r['color'] for r in get_layers(s, script.show_id)}
 
         # Detach data before closing the session.
         script_title = script.title or 'Script'
@@ -548,7 +554,7 @@ async def export_script_pdf(
         ]
 
     layout = _load_layout(layout_path)
-    pdf_bytes = generate_pdf(script_obj, cue_list, layout)
+    pdf_bytes = generate_pdf(script_obj, cue_list, layout, layer_colors)
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M')
     filename = f'{script_title} {timestamp}.pdf'

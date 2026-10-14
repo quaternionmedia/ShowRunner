@@ -8,7 +8,7 @@ with SQLite by default.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Integer, cast
+from sqlalchemy import Integer, UniqueConstraint, cast
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -38,6 +38,7 @@ class Show(SQLModel, table=True):
     cue_lists: list['CueList'] = Relationship(back_populates='show')
     actors: list['Actor'] = Relationship(back_populates='show')
     configs: list['Config'] = Relationship(back_populates='show')
+    layers: list['Layer'] = Relationship(back_populates='show')
     cue_logs: list['CueLog'] = Relationship(back_populates='show')
 
 
@@ -77,11 +78,31 @@ class CueList(SQLModel, table=True):
         return self.name or f'CueList {self.id}'
 
 
+class Layer(SQLModel, table=True):
+    """A named cue layer within a show (e.g. 'Lights'), with a backend type.
+
+    ``type`` is validated against the layer type registry in ``showrunner.layers``.
+    ``Cue.layer`` stores the layer name, not an id.
+    """
+
+    __tablename__ = 'layers'
+    __table_args__ = (UniqueConstraint('show_id', 'name'),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    show_id: int = Field(foreign_key='shows.id')
+    name: str
+    color: str = 'grey'  # Quasar colour name
+    type: str = 'generic'
+    sequence: int = Field(default=0)
+
+    show: Optional[Show] = Relationship(back_populates='layers')
+
+
 class Cue(SQLModel, table=True):
     """A single cue within a cue list.
 
     Cues are ordered by (number, point) and belong to a specific layer
-    (Lights, Sound, Video, Audio, Stage).
+    (see the ``layers`` table).
     """
 
     __tablename__ = 'cues'
@@ -91,7 +112,7 @@ class Cue(SQLModel, table=True):
     number: str | None = None  # main cue number (e.g. "q42")
     point: int = Field(default=0)
     name: str | None = None
-    layer: str | None = None  # Lights, Sound, Video, Audio, Stage
+    layer: str | None = None  # layer name; see the layers table
     cue_type: str | None = None  # Network, MIDI, Audio, Video, etc.
     notes: str | None = None
     color: str | None = None

@@ -224,6 +224,8 @@ See [`src/showrunner/hookspecs.py`](src/showrunner/hookspecs.py) for full docstr
 | `showrunner_get_routes()`            | Return a `fastapi.APIRouter` (or `None`)              |
 | `showrunner_get_commands()`          | Return a list of CLI command dicts                    |
 | `showrunner_script_previews(cues)`   | Return preview chips for cues in the `/script` viewer |
+| `showrunner_get_layer_types()`      | Register cue layer types (e.g. a plugin's `mix` type) |
+| `showrunner_get_layers()`           | Add layers to every show that does not have them     |
 | `showrunner_command(name, **kwargs)` | Handle a broadcast command _(future)_                 |
 | `showrunner_query(name, **kwargs)`   | Answer a broadcast query _(future)_                   |
 | `showrunner_event(name, **kwargs)`   | React to a broadcast event _(future)_                 |

@@ -1,11 +1,13 @@
-from loguru import logger
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 try:
+    import typer
     from typer import Argument, Option, Typer
 except ImportError:
     print(
@@ -21,8 +23,17 @@ from sqlmodel import select
 from showrunner import ShowRunner
 from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
-from showrunner.models import CUE_ORDER, Cue, CueList, Script, Show
+from showrunner.layers import (
+    add_layer,
+    delete_layer,
+    ensure_layers,
+    get_layer_types,
+    get_layers,
+    update_layer,
+)
 from showrunner.migrations.cli import migration
+from showrunner.models import CUE_ORDER, Cue, CueList, Layer, Script, Show
+from showrunner.utils import get_plugin_manager
 
 console = Console()
 
@@ -104,6 +115,16 @@ cues_app = Typer(
 cli.add_typer(cues_app, name="cues")
 
 # ---------------------------------------------------------------------------
+# Sub-app: layers
+# ---------------------------------------------------------------------------
+
+layers_app = Typer(
+    help="Manage cue layers (name, colour and type) within a show.",
+    no_args_is_help=True,
+)
+cli.add_typer(layers_app, name="layers")
+
+# ---------------------------------------------------------------------------
 # Sub-app: scripts
 # ---------------------------------------------------------------------------
 
@@ -144,6 +165,17 @@ def _show_id(show_id: int | None) -> int:
         console.print("[red]No show specified and no current-show set in config.[/red]")
         raise typer.Exit(1)
     return show_id
+
+
+def _pm():
+    """Plugin manager, so plugin layer types are known to the CLI."""
+    return get_plugin_manager(load_config())
+
+
+def _find_layer(session, show_id: int, name: str) -> Layer | None:
+    return session.exec(
+        select(Layer).where(Layer.show_id == show_id, Layer.name == name)
+    ).first()
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +488,7 @@ def _shows_create(name: list[str], venue: Optional[str]) -> None:
         show = Show(name=show_name, venue=venue)
         session.add(show)
         session.commit()
+        ensure_layers(session, show.id, _pm())
         session.refresh(show)
         console.print(
             f'[green]Created[/green] show [bold]"{show.name}"[/bold] (id={show.id})'
@@ -661,7 +694,7 @@ def cues_add(
     name: str = Argument(..., help="Cue name or label"),
     number: Optional[str] = Option(None, "--number", "-N", help="Cue number (e.g. 5 or q42)"),
     layer: Optional[str] = Option(
-        None, "--layer", "-l", help="Layer: Lights, Sound, Video, Audio, Stage"
+        None, "--layer", "-l", help="Layer name in this show (see `sr layers list`)"
     ),
     cue_type: Optional[str] = Option(
         None, "--type", "-t", help="Cue type: Network, MIDI, Audio, Video, etc."
@@ -675,6 +708,13 @@ def cues_add(
         cue_list = session.get(CueList, cue_list_id)
         if not cue_list:
             console.print(f"[red]Cue list {cue_list_id} not found.[/red]")
+            db.close()
+            raise typer.Exit(1)
+
+        if layer is not None and _find_layer(session, cue_list.show_id, layer) is None:
+            console.print(
+                f'[red]Layer "{layer}" is not in this show. See `sr layers list`.[/red]'
+            )
             db.close()
             raise typer.Exit(1)
 
@@ -698,6 +738,133 @@ def cues_add(
         )
 
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# Layers sub-commands
+# ---------------------------------------------------------------------------
+
+
+@layers_app.command("types")
+def layers_types():
+    """List layer types: built-in and provided by plugins."""
+    table = Table(title="Layer Types")
+    table.add_column("Type", style="cyan", no_wrap=True)
+    table.add_column("Label")
+    table.add_column("Description", style="dim")
+    for info in get_layer_types(_pm()).values():
+        table.add_row(info["type"], info["label"], info["description"])
+    console.print(table)
+
+
+@layers_app.command("list")
+def layers_list(
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
+):
+    """List a show's layers."""
+    show_id = _show_id(show_id)
+    db = _db()
+    with db.session() as session:
+        rows = get_layers(session, show_id, _pm())
+    db.close()
+
+    table = Table(title="Layers")
+    table.add_column("Name", style="bold")
+    table.add_column("Type")
+    table.add_column("Colour")
+    for r in rows:
+        ptype = r["type"] if r["available"] else f"{r['type']} (plugin not loaded)"
+        table.add_row(r["name"], ptype, r["color"])
+    console.print(table)
+
+
+@layers_app.command("add")
+def layers_add(
+    name: str = Argument(..., help="Layer name, unique within the show"),
+    type_: str = Option("generic", "--type", "-t", help="Layer type (see `sr layers types`)"),
+    color: str = Option("grey", "--color", "-c", help="Quasar colour name, e.g. orange"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
+):
+    """Add a layer to a show."""
+    show_id = _show_id(show_id)
+    db = _db()
+    try:
+        with db.session() as session:
+            layer = add_layer(session, show_id, name, type_, color, _pm())
+            console.print(
+                f'[green]Added[/green] layer [bold]"{layer.name}"[/bold] '
+                f"({layer.type}, {layer.color})"
+            )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    finally:
+        db.close()
+
+
+@layers_app.command("set")
+def layers_set(
+    name: str = Argument(..., help="Current layer name"),
+    new_name: Optional[str] = Option(None, "--name", "-n", help="Rename; cues follow"),
+    type_: Optional[str] = Option(None, "--type", "-t", help="New layer type"),
+    color: Optional[str] = Option(None, "--color", "-c", help="New Quasar colour name"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
+):
+    """Change a layer's name, type or colour."""
+    changes = {"name": new_name, "type": type_, "color": color}
+    changes = {k: v for k, v in changes.items() if v is not None}
+    if not changes:
+        console.print("[red]Nothing to change: pass --name, --type or --color.[/red]")
+        raise typer.Exit(1)
+    show_id = _show_id(show_id)
+    db = _db()
+    try:
+        with db.session() as session:
+            layer = _find_layer(session, show_id, name)
+            if layer is None:
+                console.print(f'[red]Layer "{name}" not found in show {show_id}.[/red]')
+                raise typer.Exit(1)
+            layer = update_layer(session, layer, _pm(), **changes)
+            console.print(
+                f'[green]Updated[/green] layer [bold]"{layer.name}"[/bold] '
+                f"({layer.type}, {layer.color})"
+            )
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    finally:
+        db.close()
+
+
+@layers_app.command("remove")
+def layers_remove(
+    name: str = Argument(..., help="Layer name"),
+    show_id: Optional[int] = Option(
+        None, "--show", "-s", help="ID of the show (default: current-show from config)"
+    ),
+):
+    """Remove a layer. Refused while cues still use it."""
+    show_id = _show_id(show_id)
+    db = _db()
+    try:
+        with db.session() as session:
+            layer = _find_layer(session, show_id, name)
+            if layer is None:
+                console.print(f'[red]Layer "{name}" not found in show {show_id}.[/red]')
+                raise typer.Exit(1)
+            delete_layer(session, layer)
+            console.print(f'[green]Removed[/green] layer [bold]"{name}"[/bold]')
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1)
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

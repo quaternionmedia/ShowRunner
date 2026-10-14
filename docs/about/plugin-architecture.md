@@ -92,6 +92,8 @@ All hooks are defined in `src/showrunner/hookspecs.py` and prefixed with `showru
 | `showrunner_get_routes()`            | Provide HTTP endpoints              | `fastapi.APIRouter` or `None`      | ✅ All plugins                  |
 | `showrunner_get_commands()`          | Provide CLI/TUI commands            | `list[dict]`                       | ✅ All plugins                  |
 | `showrunner_script_previews(cues)`   | Add preview chips under script cues | `{cue_id: [chip, ...]}` or `None`  | ✅ ShowScripter viewer          |
+| `showrunner_get_layer_types()`       | Register cue layer types            | `dict` or `list[dict]`             | ✅ Layers                       |
+| `showrunner_get_layers()`            | Add layers to each show             | `dict` or `list[dict]`             | ✅ Layers                       |
 | `showrunner_command(name, **kwargs)` | Receive a broadcast command         | —                                  | 🔲 Defined, not yet implemented |
 | `showrunner_query(name, **kwargs)`   | Answer a broadcast query            | any                                | 🔲 Defined, not yet implemented |
 | `showrunner_event(name, **kwargs)`   | Receive a broadcast event           | —                                  | 🔲 Defined, not yet implemented |
