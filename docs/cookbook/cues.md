@@ -37,3 +37,27 @@ cue = Cue(
     script_char=0,    # character offset within that line (0 = start of line)
 )
 ```
+
+### Layers
+
+`Cue.layer` is free text, but the ShowScripter viewer offers `Lights`, `Sound`, `Video`, `Audio`, `Stage` and `Mix` (the `Mix` layer is for TheatreMix cues). Cues from every cue list in a show appear in the script viewer, not only the selected list.
+
+### Show preview chips in the script viewer
+
+A plugin can put short labels under cues in the `/script` viewer by implementing `showrunner_script_previews`. It receives the viewer's cue dicts and returns chips keyed by cue id. Chips show under the cue's line, and at the top of each following page until a later cue with chips takes over.
+
+```python
+import showrunner
+
+
+class JudgeNotes:
+    @showrunner.hookimpl
+    def showrunner_script_previews(self, cues):
+        return {
+            c['id']: [{'text': f'Judge {c["number"]}', 'color': 'amber', 'tooltip': c['name']}]
+            for c in cues
+            if c['layer'] == 'Sound'
+        }
+```
+
+Each chip is a dict with `text` (required), and optional `color` (Quasar colour, default `white`) and `tooltip`. If a plugin raises, the error is logged and no previews are shown for that page load.
