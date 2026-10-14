@@ -25,7 +25,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
 
     - name: 📦 Sync dependencies
-      run: uv sync --extra cli osc
+      run: uv sync --extra cli,osc
 
     - name: 🧫 Run tests
       run: uv run pytest
