@@ -4,6 +4,7 @@ Provides a NiceGUI page at ``/script`` for viewing scripts and placing cues
 onto specific lines within the script text.
 """
 
+import logging
 import re
 from collections import deque
 from html import escape as _escape
@@ -15,9 +16,10 @@ from sqlmodel import select
 import showrunner
 from showrunner.plugins.db import get_db
 from showrunner.models import Cue, CueList, Script, Show
+from showrunner import ui as _sr_ui
 from showrunner.ui import _current_script_id, _current_show_id, header
 
-LAYERS = ['Lights', 'Sound', 'Video', 'Audio', 'Stage']
+LAYERS = ['Lights', 'Sound', 'Video', 'Audio', 'Stage', 'Mix']
 
 LAYER_COLORS = {
     'Lights': 'orange',
@@ -25,6 +27,7 @@ LAYER_COLORS = {
     'Video': 'purple',
     'Audio': 'cyan',
     'Stage': 'green',
+    'Mix': 'pink',
 }
 
 PAGE_SIZE = 100
@@ -93,6 +96,30 @@ def _parse_pages(lines: list[str]) -> list[dict]:
     return pages
 
 
+def _get_previews(cues: list[dict]) -> dict[int, list[dict]]:
+    """Collect preview chips for *cues* from plugins; a failing plugin must not break the page."""
+    pm = _sr_ui._pm
+    if pm is None or not cues:
+        return {}
+    previews: dict[int, list[dict]] = {}
+    try:
+        for result in pm.hook.showrunner_script_previews(cues=cues):
+            if result:
+                previews.update(result)
+    except Exception:
+        logging.getLogger(__name__).exception('showrunner_script_previews failed')
+    return previews
+
+
+def _carried_cue(cues: list[dict], previews: dict, first_line: int) -> dict | None:
+    """Last cue with a preview positioned before *first_line* (1-based), by script position."""
+    before = [
+        c for c in cues
+        if c['id'] in previews and c['script_line'] is not None and c['script_line'] < first_line
+    ]
+    return max(before, key=lambda c: (c['script_line'], c['script_char'] or 0), default=None)
+
+
 def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
     """Register the /script NiceGUI page."""
 
@@ -146,9 +173,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             if cue_list_id is None:
                 return []
             with get_db().session() as s:
+                # Show every cue list of the show, so plugin lists (e.g. TheatreMix) appear too
+                show_id = s.get(CueList, cue_list_id).show_id
+                show_lists = select(CueList.id).where(CueList.show_id == show_id)
                 cues = s.exec(
                     select(Cue)
-                    .where(Cue.cue_list_id == cue_list_id)
+                    .where(Cue.cue_list_id.in_(show_lists))
                     .order_by(Cue.number, Cue.point)
                 ).all()
                 return [
@@ -406,6 +436,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             for line_cues in cues_by_line.values():
                 line_cues.sort(key=lambda c: c['script_char'] or 0)
 
+            previews = _get_previews(cues)
+
             lines = content.split('\n')
             pages = _parse_pages(lines)
             parsed_pages['v'] = pages
@@ -417,6 +449,22 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
             detail_active = show_details['v']
 
+            def render_preview(chips: list[dict], note: str | None = None) -> None:
+                # grid-column spans both columns so it works with the detail column on or off
+                with (
+                    ui.row()
+                    .classes('items-center gap-1 mb-1')
+                    .style('grid-column: 1 / -1; margin-left: 3rem;')
+                ):
+                    if note:
+                        ui.label(note).classes('text-xs text-grey')
+                    for chip in chips:
+                        badge = ui.badge(chip['text']).props(
+                            f'color=grey-9 text-color={chip.get("color", "white")}'
+                        )
+                        if chip.get('tooltip'):
+                            badge.tooltip(chip['tooltip'])
+
             with container:
                 # When details are active, use a 2-column CSS grid
                 grid_style = (
@@ -425,6 +473,16 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     else 'display: grid; grid-template-columns: 1fr; width: 100%;'
                 )
                 with ui.element('div').style(grid_style):
+                    carried = (
+                        _carried_cue(cues, previews, page_lines[0][0] + 1)
+                        if page_lines and page > 0
+                        else None
+                    )
+                    if carried:
+                        render_preview(
+                            previews[carried['id']],
+                            note=f'From cue {carried["number"]} (line {carried["script_line"]}):',
+                        )
                     for line_idx, line in page_lines:
                         line_num = line_idx + 1
                         line_cues = cues_by_line.get(line_num, [])
@@ -494,6 +552,10 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                                 ui.element('div').style(
                                     'border-left: 1px solid rgba(255,255,255,0.1);'
                                 )
+
+                        for c in line_cues:
+                            if c['id'] in previews:
+                                render_preview(previews[c['id']])
 
             render_pagination()
 
