@@ -238,6 +238,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 return _get_or_create_cuelist(show_id), True
             if choice is None:
                 return _get_or_create_cuelist(show_id), False
+            with get_db().session() as s:
+                cl = s.get(CueList, choice)
+            if cl is None or cl.show_id != show_id:  # a restored filter may be stale
+                list_filter['v'] = None
+                return _get_or_create_cuelist(show_id), False
             return choice, False
 
         def _cue_list_options(show_id: int) -> dict:
@@ -496,7 +501,10 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             total_pages['v'] = max(1, len(pages))
             current_page['v'] = min(current_page['v'], total_pages['v'] - 1)
             # per-browser (server-side user storage), per-script: a refresh reopens the page being read
-            nicegui_app.storage.user.setdefault('script_pages', {})[str(sid)] = current_page['v']
+            nicegui_app.storage.user.setdefault('script_views', {})[str(sid)] = {
+                'page': current_page['v'],
+                'list': list_filter['v'],
+            }
 
             page = current_page['v']
             page_lines = pages[page]['lines']
@@ -1092,11 +1100,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 ui.button('Layers', icon='tune', on_click=open_layers_dialog).props('flat dense')
                 show_id = selected_show_id['v']
                 if show_id is not None:
-                    current = (
-                        list_filter['v']
-                        if list_filter['v'] is not None
-                        else _get_or_create_cuelist(show_id)
-                    )
+                    scope_id, all_lists = _cue_scope(show_id)
+                    current = ALL_LISTS if all_lists else scope_id
                     ui.select(
                         _cue_list_options(show_id),
                         value=current,
@@ -1171,7 +1176,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             if layer is None:
                 ui.notify('Add a layer first (Layers button).', type='warning')
                 return
-            cl_id = _get_or_create_cuelist(show_id)
+            cl_id, _ = _cue_scope(show_id)  # the list being viewed, so the new cue is visible
 
             try:
                 with get_db().session() as s:
@@ -1254,8 +1259,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 if initial_value is not None:
                     selected_script_id['v'] = initial_value
                     nicegui_app.storage.general['current_script'] = initial_value
-                    saved = nicegui_app.storage.user.get('script_pages', {}).get(str(initial_value))
-                    current_page['v'] = saved if isinstance(saved, int) and saved > 0 else 0
+                    saved = nicegui_app.storage.user.get('script_views', {}).get(str(initial_value))
+                    if isinstance(saved, dict):
+                        page, flt = saved.get('page'), saved.get('list')
+                        current_page['v'] = page if isinstance(page, int) and page > 0 else 0
+                        list_filter['v'] = flt if isinstance(flt, int) else None
 
         # Toolbar
         toolbar_ref['el'] = ui.row().classes(
