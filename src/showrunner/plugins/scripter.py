@@ -735,11 +735,10 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         target_name='v',
                         backward=lambda v: v > 0,
                     )
-                    page_label = ''
-                    if current_label_int is not None:
-                        page_label = f'Page {current_label_int}'
-                    else:
-                        page_label = f'Page {page + 1}'
+                    raw_label = (
+                        parsed_pages['v'][page].get('label') if parsed_pages['v'] else None
+                    )  # may be non-numeric, e.g. a roman numeral
+                    page_label = f'Page {raw_label or page + 1}'
                     ui.label(f'{page_label}  ({page + 1} / {total})').classes(
                         'text-sm mx-2'
                     )
@@ -767,15 +766,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         backward=lambda v: v < total_pages['v'] - 1,
                     )
                     ui.label('Go to page:').classes('text-sm ml-4')
-                    # Show the page label (e.g. "42" from [[Page 42]]) if available
-                    current_label = (
-                        parsed_pages['v'][page].get('label')
-                        if parsed_pages['v']
-                        else None
-                    )
                     goto_input = (
                         ui.number(
-                            value=int(current_label) if current_label else page + 1,
+                            value=current_label_int if current_label_int is not None else page + 1,
                             min=1,
                             format='%d',
                         )

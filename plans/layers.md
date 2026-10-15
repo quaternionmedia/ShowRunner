@@ -71,7 +71,7 @@ Alembic revision (after `2a50c1c7c24c`): create `layers`; seed per show the five
 - [x] printer: DB colours, TOML override; trim `pdf_layout.toml`
 - [x] CLI `sr layers …`, `--layer` validation; db.py routes; admin view
 - [x] Remove `Mix` from core (`scripter.py` LAYERS/colours). Tests (#7) and docs (`cues.md` with the Mix-plugin example, `pdf-export.md`, `ref/models.md`, `plugin-architecture.md`, CONTRIBUTING hook table)
-- [ ] Push to `layers` (updates PR #41); update PR body
+- [x] Push to `layers` (updates PR #41); update PR body
 
 ## Verification
 
