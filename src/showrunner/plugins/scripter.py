@@ -26,6 +26,7 @@ from showrunner.layers import (
 )
 from showrunner.models import Cue, CueList, Layer, Script
 from showrunner.plugins.db import get_db
+from showrunner.scriptformat import DEFAULT_LINE_HEIGHT, block_css, classify_lines, load_styles
 from showrunner.ui import _current_script_id, _current_show_id, header
 
 ALL_LISTS = 0  # cue-list filter value meaning "every cue list in the show"
@@ -157,8 +158,17 @@ def _get_or_create_cuelist(show_id: int) -> int:
         return cl.id
 
 
-def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
-    """Register the /script NiceGUI page."""
+def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None = None) -> None:
+    """Register the /script NiceGUI page.
+
+    *plugin_cfg* is the ``[plugins.showscripter]`` table: ``show-previews``,
+    ``line-height`` and ``format.<block>`` style overrides.
+    """
+    cfg = plugin_cfg or {}
+    styles = load_styles(cfg.get('format'))
+    line_height = str(cfg.get('line-height', DEFAULT_LINE_HEIGHT))
+    if not re.fullmatch(r'[\d.]+(rem|em|px)?', line_height):
+        line_height = DEFAULT_LINE_HEIGHT
 
     @ui.page('/script')
     def script_page():
@@ -183,6 +193,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
         # toggle for cue detail annotations
         show_details: dict = {'v': False}
 
+        # toggle for plugin preview chips
+        show_previews: dict = {'v': bool(cfg.get('show-previews', True))}
+
         # toggle for click-to-add-cue mode
         cue_mode: dict = {'v': False}
 
@@ -190,7 +203,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
         script_select_ref: dict = {'el': None}
         script_content_ref: dict = {'el': None}
         pagination_top_ref: dict = {'el': None}
-        pagination_ref: dict = {'el': None}
+        scroll_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
         toolbar_ref: dict = {'el': None}
 
@@ -322,7 +335,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 names.append(current)
             return names
 
-        def render_cue_chip(c: dict) -> None:
+        def render_cue_chip(c: dict, compact: bool = False) -> None:
             """Render a draggable, editable cue badge."""
             color = _layer_colour(c['layer'])
             number = c['number'] if c['number'] is not None else ''
@@ -347,6 +360,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     color=color,
                 )
                 badge.tooltip(f'{c["layer"]} {number}: {c["name"] or ""}')
+                if compact:
+                    badge.style('font-size: 0.65rem; padding: 1px 4px;')
 
             with ui.menu().props('anchor="bottom left" self="top left"') as menu:
                 with ui.card().classes('p-3 gap-2').style('min-width: 260px'):
@@ -471,9 +486,10 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             for line_cues in cues_by_line.values():
                 line_cues.sort(key=lambda c: c['script_char'] or 0)
 
-            previews = _get_previews(cues)
+            previews = _get_previews(cues) if show_previews['v'] else {}
 
             lines = content.split('\n')
+            kinds = classify_lines(lines)
             pages = _parse_pages(lines)
             parsed_pages['v'] = pages
             total_pages['v'] = max(1, len(pages))
@@ -484,24 +500,39 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
             detail_active = show_details['v']
 
-            def render_preview(chips: list[dict], note: str | None = None) -> None:
+            def render_preview(chips: list[dict], cue: dict, carried: bool = False) -> None:
+                """A boxed chip group with a pointer up to its source cue."""
+                colour = _layer_colour(cue['layer'])
+                colour = colour if is_color(colour) else 'grey'
+                number = cue['number'] if cue['number'] is not None else ''
                 # grid-column spans both columns so it works with the detail column on or off
-                with (
-                    ui.row()
-                    .classes('items-center gap-1 mb-1')
-                    .style('grid-column: 1 / -1; margin-left: 3rem;')
-                ):
-                    if note:
-                        ui.label(note).classes('text-xs text-grey')
-                    for chip in chips:
-                        text_colour = chip.get('color')
-                        if not is_color(text_colour):  # reaches a Quasar props string: whitelist
-                            text_colour = 'white'
-                        badge = ui.badge(chip['text']).props(
-                            f'color=grey-9 text-color={text_colour}'
+                with ui.element('div').style('grid-column: 1 / -1; margin: 0.4rem 0 0.2rem 3rem;'):
+                    with ui.element('div').classes(f'relative text-{colour}').style(
+                        'display: inline-block; max-width: 80%; padding: 4px 8px; '
+                        'border: 1px solid currentColor; border-radius: 6px; background: #1b1b1b;'
+                    ):
+                        ui.element('div').style(
+                            'position: absolute; top: -6px; left: 1rem; width: 9px; height: 9px; '
+                            'background: #1b1b1b; border-left: 1px solid currentColor; '
+                            'border-top: 1px solid currentColor; transform: rotate(45deg);'
                         )
-                        if chip.get('tooltip'):
-                            badge.tooltip(chip['tooltip'])
+                        with ui.row().classes('items-center gap-1'):
+                            ui.badge(f'{(cue["layer"] or "")[:1]} {number}', color=colour).props(
+                                'dense'
+                            )
+                            if carried:
+                                ui.label(f'from line {cue["script_line"]}').classes(
+                                    'text-xs text-grey'
+                                )
+                            for chip in chips:
+                                text_colour = chip.get('color')
+                                if not is_color(text_colour):  # reaches a Quasar props string
+                                    text_colour = 'white'
+                                badge = ui.badge(chip['text']).props(
+                                    f'color=grey-9 text-color={text_colour}'
+                                )
+                                if chip.get('tooltip'):
+                                    badge.tooltip(chip['tooltip'])
 
             with container:
                 # When details are active, use a 2-column CSS grid
@@ -517,10 +548,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                         else None
                     )
                     if carried:
-                        render_preview(
-                            previews[carried['id']],
-                            note=f'From cue {carried["number"]} (line {carried["script_line"]}):',
-                        )
+                        render_preview(previews[carried['id']], carried, carried=True)
                     for line_idx, line in page_lines:
                         line_num = line_idx + 1
                         line_cues = cues_by_line.get(line_num, [])
@@ -553,7 +581,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                                     if (!cueId) return;
                                     let charOffset = 0;
                                     const span = document.elementFromPoint(e.clientX, e.clientY);
-                                    const offsetAttr = span ? (span.closest('[data-offset]') || {}).dataset : {};
+                                    const offsetAttr = (span && (span.closest('[data-offset]') || {}).dataset) || {};
                                     const segOffset = parseInt(offsetAttr.offset || '0', 10);
                                     if (document.caretPositionFromPoint) {
                                         const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
@@ -572,7 +600,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                             )
 
                             # Build line content with inline cue chips at char positions
-                            _render_line_with_cues(line, line_num, line_cues)
+                            _render_line_with_cues(line, line_num, line_cues, kinds[line_idx])
 
                         # -- Column 2: cue detail annotations --
                         if detail_active:
@@ -593,18 +621,17 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
                         for c in line_cues:
                             if c['id'] in previews:
-                                render_preview(previews[c['id']])
+                                render_preview(previews[c['id']], c)
 
             render_pagination()
 
         def _render_line_with_cues(
-            line: str, line_num: int, line_cues: list[dict]
+            line: str, line_num: int, line_cues: list[dict], kind: str = 'action'
         ) -> None:
-            """Render a script line with cue chips interleaved at character positions.
+            """Render a script line styled as its block *kind*, cues floating above the text.
 
-            The line text is split at each cue's ``script_char`` offset so chips
-            appear inline within the text.  Clicking a text segment places a new
-            cue at the exact character the user clicked.
+            Cue chips sit in zero-width anchors at their character offsets, so they never
+            move the words. Clicking a text segment places a new cue at that character.
             """
 
             def _make_clickable_span(text: str, ln: int, segment_offset: int) -> None:
@@ -615,10 +642,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                 # click events on it would silently never reach Python.
                 el = (
                     ui.element('span')
-                    .style(
-                        f'white-space:pre-wrap; cursor:{cursor}; font-family:monospace; font-size:0.875rem;'
-                    )
-                    .classes('font-mono text-sm')
+                    .style(f'white-space: pre-wrap; cursor: {cursor};')
                 )
                 el._props['data-offset'] = str(segment_offset)
                 el._props['innerHTML'] = _escape(text) or '\u00a0'
@@ -647,32 +671,31 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     }''',
                 )
 
-            if not line_cues:
-                _make_clickable_span(line or '\u00a0', line_num, 0)
-                return
+            by_char: dict[int, list[dict]] = {}
+            for c in line_cues:
+                pos = min(c['script_char'] or 0, len(line))
+                by_char.setdefault(pos, []).append(c)
 
-            # Use an inline-flow container so text and chips don't create
-            # block-level breaks.  Flex containers blockify their children
-            # which causes unwanted line breaks for wrapped text.
-            with (
-                ui.element('div')
-                .style('display: inline; line-height: 1.5;')
-                .classes('flex-1')
+            with ui.element('div').style(
+                f'position: relative; flex: 1; min-width: 0; line-height: {line_height}; '
+                f'font-family: monospace; font-size: 0.875rem; {block_css(styles[kind])}'
             ):
                 cursor = 0
-                for c in line_cues:
-                    char_pos = c['script_char'] if c['script_char'] is not None else 0
-
-                    if char_pos > cursor:
-                        _make_clickable_span(line[cursor:char_pos], line_num, cursor)
-                        cursor = char_pos
-
-                    render_cue_chip(c)
-
-                if cursor < len(line):
-                    _make_clickable_span(line[cursor:], line_num, cursor)
-                else:
-                    ui.html('&nbsp;')
+                for pos in sorted(by_char):
+                    if pos > cursor:
+                        _make_clickable_span(line[cursor:pos], line_num, cursor)
+                        cursor = pos
+                    with ui.element('span').style(
+                        'position: relative; display: inline-block; width: 0; height: 0;'
+                    ):
+                        with ui.element('span').style(
+                            'position: absolute; left: 0; bottom: 0.6em; white-space: nowrap; '
+                            'z-index: 2; line-height: 1; font-style: normal; font-weight: normal; '
+                            'text-transform: none;'
+                        ):
+                            for c in by_char[pos]:
+                                render_cue_chip(c, compact=True)
+                _make_clickable_span(line[cursor:] or '\u00a0', line_num, cursor)
 
         def _render_pagination_into(container) -> None:
             """Render page navigation controls into *container*."""
@@ -769,10 +792,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
         def render_pagination():
             """Render all pagination bars."""
-            for ref in (pagination_top_ref, pagination_ref):
-                container = ref['el']
-                if container is None:
-                    continue
+            container = pagination_top_ref['el']
+            if container is not None:
                 container.clear()
                 _render_pagination_into(container)
 
@@ -841,6 +862,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             page = max(0, min(page, total_pages['v'] - 1))
             current_page['v'] = page
             render_script_content()
+            if scroll_ref['el'] is not None:
+                scroll_ref['el'].scroll_to(percent=0)
 
         def go_to_line(line: int):
             """Navigate to whichever page contains *line* (1-based)."""
@@ -1044,6 +1067,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
             render_toolbar()
             render_script_content()
 
+        def toggle_previews():
+            show_previews['v'] = not show_previews['v']
+            render_toolbar()
+            render_script_content()
+
         def toggle_cue_mode():
             cue_mode['v'] = not cue_mode['v']
             render_toolbar()
@@ -1100,6 +1128,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
                     on_click=toggle_details,
                     color='white' if show_details['v'] else None,
                 ).props('dense unelevated' if show_details['v'] else 'dense outline')
+                ui.button(
+                    'Previews',
+                    icon='visibility' if show_previews['v'] else 'visibility_off',
+                    on_click=toggle_previews,
+                    color='white' if show_previews['v'] else None,
+                ).props('dense unelevated' if show_previews['v'] else 'dense outline')
                 ui.separator().props('vertical')
                 ui.button(
                     'Add Cue (no position)',
@@ -1231,12 +1265,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS) -> None:
 
         with ui.splitter(value=75).classes('w-full h-full') as splitter:
             with splitter.before:
-                with ui.scroll_area().classes('w-full h-[calc(100vh-80px)]'):
+                with ui.column().classes('w-full gap-0'):
+                    # pinned above the scroll area so it stays put when the page changes
                     pagination_top_ref['el'] = ui.row().classes(
-                        'w-full justify-center p-2'
+                        'w-full justify-center p-2 border-b border-gray-700'
                     )
-                    script_content_ref['el'] = ui.column().classes('w-full p-4')
-                    pagination_ref['el'] = ui.row().classes('w-full justify-center p-2')
+                    with ui.scroll_area().classes('w-full h-[calc(100vh-130px)]') as scroll:
+                        scroll_ref['el'] = scroll
+                        script_content_ref['el'] = ui.column().classes('w-full p-4')
 
             with splitter.after:
                 with ui.scroll_area().classes('w-full h-[calc(100vh-80px)]'):
@@ -1270,10 +1306,11 @@ class ShowScripterPlugin:
             return
         settings = getattr(app, 'config', None)
         levels = DEFAULT_UNDO_LEVELS
+        plugin_cfg: dict = {}
         if settings is not None:
             plugin_cfg = settings.plugins.settings.get('showscripter', {})
             levels = int(plugin_cfg.get('undo-levels', DEFAULT_UNDO_LEVELS))
-        _build_page(undo_levels=levels)
+        _build_page(undo_levels=levels, plugin_cfg=plugin_cfg)
 
     @showrunner.hookimpl
     def showrunner_shutdown(self, app):

@@ -64,7 +64,7 @@ The viewer's **Cue list** filter shows one list (the script's list by default) o
 
 ### Show preview chips in the script viewer
 
-A plugin can put short labels under cues in the `/script` viewer by implementing `showrunner_script_previews`. It receives the viewer's cue dicts and returns chips keyed by cue id. Chips show under the cue's line, and at the top of each following page until a later cue with chips takes over.
+A plugin can put short labels under cues in the `/script` viewer by implementing `showrunner_script_previews`. It receives the viewer's cue dicts and returns chips keyed by cue id. Chips show under the cue's line, and at the top of each following page until a later cue with chips takes over. Each group is drawn in a box with a pointer up to its source cue, coloured by the cue's layer. Use the **Previews** button in the viewer toolbar to hide or show them (`show-previews` in `[plugins.showscripter]` sets the starting state; see [Format the script viewer](scripts.md#format-the-script-viewer)).
 
 ```python
 import showrunner
