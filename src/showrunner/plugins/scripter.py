@@ -203,6 +203,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         script_select_ref: dict = {'el': None}
         script_content_ref: dict = {'el': None}
         pagination_top_ref: dict = {'el': None}
+        pagination_bottom_ref: dict = {'el': None}
         scroll_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
         toolbar_ref: dict = {'el': None}
@@ -494,6 +495,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             parsed_pages['v'] = pages
             total_pages['v'] = max(1, len(pages))
             current_page['v'] = min(current_page['v'], total_pages['v'] - 1)
+            # per-browser, per-script: a refresh reopens the page being read
+            nicegui_app.storage.browser.setdefault('script_pages', {})[str(sid)] = current_page['v']
 
             page = current_page['v']
             page_lines = pages[page]['lines']
@@ -785,10 +788,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
         def render_pagination():
             """Render all pagination bars."""
-            container = pagination_top_ref['el']
-            if container is not None:
-                container.clear()
-                _render_pagination_into(container)
+            for ref in (pagination_top_ref, pagination_bottom_ref):
+                container = ref['el']
+                if container is not None:
+                    container.clear()
+                    _render_pagination_into(container)
 
         def render_unpositioned():
             """Render the list of cues without a script position (drop target)."""
@@ -1250,6 +1254,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 if initial_value is not None:
                     selected_script_id['v'] = initial_value
                     nicegui_app.storage.general['current_script'] = initial_value
+                    saved = nicegui_app.storage.browser.get('script_pages', {}).get(str(initial_value))
+                    current_page['v'] = saved if isinstance(saved, int) and saved > 0 else 0
 
         # Toolbar
         toolbar_ref['el'] = ui.row().classes(
@@ -1263,9 +1269,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     pagination_top_ref['el'] = ui.row().classes(
                         'w-full justify-center p-2 border-b border-gray-700'
                     )
-                    with ui.scroll_area().classes('w-full h-[calc(100vh-130px)]') as scroll:
+                    with ui.scroll_area().classes('w-full h-[calc(100vh-180px)]') as scroll:
                         scroll_ref['el'] = scroll
                         script_content_ref['el'] = ui.column().classes('w-full p-4')
+                    pagination_bottom_ref['el'] = ui.row().classes(
+                        'w-full justify-center p-2 border-t border-gray-700'
+                    )
 
             with splitter.after:
                 with ui.scroll_area().classes('w-full h-[calc(100vh-80px)]'):

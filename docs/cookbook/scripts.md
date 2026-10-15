@@ -91,4 +91,6 @@ color = "#e0e0e0"
 | `font`       | `font-family`                 | CSS font name  |
 | `bold`, `italic`, `uppercase` | text weight, style, case | `true` / `false` |
 
-Cues float above the text at their character position, so they never move the words. The page bar stays pinned above the script when you change pages.
+Cues float above the text at their character position, so they never move the words. The page bars stay pinned when you change pages.
+
+Page bars sit above and below the script. The page you are on is remembered per browser and script, so a refresh reopens it.
