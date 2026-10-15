@@ -495,8 +495,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             parsed_pages['v'] = pages
             total_pages['v'] = max(1, len(pages))
             current_page['v'] = min(current_page['v'], total_pages['v'] - 1)
-            # per-browser, per-script: a refresh reopens the page being read
-            nicegui_app.storage.browser.setdefault('script_pages', {})[str(sid)] = current_page['v']
+            # per-browser (server-side user storage), per-script: a refresh reopens the page being read
+            nicegui_app.storage.user.setdefault('script_pages', {})[str(sid)] = current_page['v']
 
             page = current_page['v']
             page_lines = pages[page]['lines']
@@ -1254,7 +1254,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 if initial_value is not None:
                     selected_script_id['v'] = initial_value
                     nicegui_app.storage.general['current_script'] = initial_value
-                    saved = nicegui_app.storage.browser.get('script_pages', {}).get(str(initial_value))
+                    saved = nicegui_app.storage.user.get('script_pages', {}).get(str(initial_value))
                     current_page['v'] = saved if isinstance(saved, int) and saved > 0 else 0
 
         # Toolbar
