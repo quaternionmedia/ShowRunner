@@ -121,15 +121,11 @@ background-opacity = 0.5        # 0.0 = transparent, 1.0 = opaque
 
 ### Layer colours
 
-Per-layer RGB colours for cue badges and borders:
+Cue badges and borders use the colour of each cue's layer in the show (see [Layers](cues.md#layers)). A cue with no layer, or a layer colour that isn't known, is grey. To override one layer in a template, add an RGB entry:
 
 ```toml
 [cues.colors]
-Lights = [255, 165, 0]     # orange
-Sound  = [50, 100, 255]    # blue
-Video  = [160, 32, 240]    # purple
-Audio  = [0, 200, 200]     # cyan
-Stage  = [0, 180, 0]       # green
+Lights = [255, 165, 0]     # optional: overrides the layer's colour in this template
 ```
 
 ## How it works

@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover
     HAS_SQLADMIN = False
 
 import showrunner
-from showrunner.models import Actor, Config, Cue, CueList, CueLog, Script, Show
+from showrunner.models import Actor, Config, Cue, CueList, CueLog, Layer, Script, Show
 
 # ---------------------------------------------------------------------------
 # ModelAdmin views (only defined when sqladmin is available)
@@ -132,11 +132,20 @@ if HAS_SQLADMIN:
         name_plural = 'Config'
         icon = 'fa-solid fa-gear'
 
+    class LayerAdmin(ModelView, model=Layer):
+        column_list = [Layer.id, Layer.show_id, Layer.name, Layer.color, Layer.type, Layer.sequence]
+        column_searchable_list = [Layer.name]
+        column_sortable_list = [Layer.id, Layer.name, Layer.sequence]
+        name = 'Layer'
+        name_plural = 'Layers'
+        icon = 'fa-solid fa-layer-group'
+
     _MODEL_VIEWS = [
         ShowAdmin,
         ScriptAdmin,
         CueListAdmin,
         CueAdmin,
+        LayerAdmin,
         ActorAdmin,
         CueLogAdmin,
         ConfigAdmin,
