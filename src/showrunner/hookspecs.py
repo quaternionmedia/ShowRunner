@@ -149,7 +149,7 @@ class ShowRunnerSpec:
         script_line, script_char). Return ``{cue_id: [chip, ...]}`` for the cues
         this plugin recognises, or ``None``. Each chip is a dict with keys:
             text: Short label (e.g. "1 Judge")
-            color: Quasar colour for the text (default "white")
+            color: Quasar background colour for the chip (default "grey-9")
             tooltip: Optional hover text
 
         The viewer shows the chips under the cue's line, and again at the top of

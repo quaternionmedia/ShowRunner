@@ -93,4 +93,4 @@ color = "#e0e0e0"
 
 Cues float above the text at their character position, so they never move the words. The page bars stay pinned when you change pages.
 
-Page bars sit above and below the script. The page and cue list you are on are remembered per browser and script, so a refresh reopens them.
+Page bars sit above and below the script. The page and cue list you are on are remembered per browser and script, and the Cue Details and Previews toggles are remembered per browser, so a refresh reopens them.

@@ -191,10 +191,13 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         undo_stack: deque[dict] = deque(maxlen=undo_levels)
 
         # toggle for cue detail annotations
-        show_details: dict = {'v': False}
+        # per-browser (server-side user storage), restored on page load
+        show_details: dict = {'v': bool(nicegui_app.storage.user.get('show_details', False))}
 
         # toggle for plugin preview chips
-        show_previews: dict = {'v': bool(cfg.get('show-previews', True))}
+        show_previews: dict = {
+            'v': bool(nicegui_app.storage.user.get('show_previews', cfg.get('show-previews', True)))
+        }
 
         # toggle for click-to-add-cue mode
         cue_mode: dict = {'v': False}
@@ -536,11 +539,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                                     'text-xs text-grey'
                                 )
                             for chip in chips:
-                                text_colour = chip.get('color')
-                                if not is_color(text_colour):  # reaches a Quasar props string
-                                    text_colour = 'white'
+                                bg_colour = chip.get('color')
+                                if not is_color(bg_colour):  # reaches a Quasar props string
+                                    bg_colour = 'grey-9'
                                 badge = ui.badge(chip['text']).props(
-                                    f'color=grey-9 text-color={text_colour}'
+                                    f'color={bg_colour} text-color=white'
                                 )
                                 if chip.get('tooltip'):
                                     badge.tooltip(chip['tooltip'])
@@ -1069,11 +1072,13 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
         def toggle_details():
             show_details['v'] = not show_details['v']
+            nicegui_app.storage.user['show_details'] = show_details['v']
             render_toolbar()
             render_script_content()
 
         def toggle_previews():
             show_previews['v'] = not show_previews['v']
+            nicegui_app.storage.user['show_previews'] = show_previews['v']
             render_toolbar()
             render_script_content()
 
