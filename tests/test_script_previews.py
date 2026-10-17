@@ -69,7 +69,7 @@ def test_load_cues_scopes_to_one_list_or_all_and_survives_deleted_list(db, monke
     assert [c['name'] for c in _load_cues(1, all_lists=True)] == ['a', 'b']
 
 
-def test_preview_text_colour_must_be_a_plain_colour_name():
+def test_preview_chip_colour_must_be_a_plain_colour_name():
     from showrunner.layers import is_color
 
     assert is_color('amber') and is_color('deep-purple')

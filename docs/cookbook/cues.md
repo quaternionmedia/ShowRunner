@@ -80,4 +80,4 @@ class JudgeNotes:
         }
 ```
 
-Each chip is a dict with `text` (required), and optional `color` (Quasar colour, default `white`) and `tooltip`. If a plugin raises, the error is logged and the other plugins' chips still show.
+Each chip is a dict with `text` (required), and optional `color` (the chip's Quasar background colour, default `grey-9`; the text is white) and `tooltip`. If a plugin raises, or answers in a shape that cannot be drawn, the error is logged and the other plugins' chips still show.
