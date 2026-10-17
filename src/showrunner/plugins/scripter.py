@@ -9,6 +9,7 @@ from collections import deque
 from html import escape as _escape
 from typing import Callable
 
+from loguru import logger
 from nicegui import app as nicegui_app
 from nicegui import ui
 from sqlmodel import select
@@ -98,14 +99,31 @@ def _parse_pages(lines: list[str]) -> list[dict]:
 
 
 def _get_previews(cues: list[dict]) -> dict[int, list[dict]]:
-    """Collect preview chips per cue id from all plugins; a failing plugin is logged and skipped."""
+    """Collect preview chips per cue id from all plugins.
+
+    A plugin that raises is logged and skipped; one that answers in the wrong
+    shape loses what cannot be drawn -- an answer that is not a dict, chips that
+    are not a list, a chip without text -- and every other plugin's chips stay.
+    """
     pm = _sr_ui._pm
     if pm is None or not cues:
         return {}
     previews: dict[int, list[dict]] = {}
     for result in hook_results(pm, 'showrunner_script_previews', cues=cues):
-        for cue_id, chips in (result or {}).items():
-            previews.setdefault(cue_id, []).extend(chips)  # several plugins may preview one cue
+        if result is None:
+            continue
+        if not isinstance(result, dict):
+            logger.warning(f'showrunner_script_previews returned {type(result).__name__}; ignored')
+            continue
+        for cue_id, chips in result.items():
+            drawable = [
+                chip for chip in (chips if isinstance(chips, list) else [])
+                if isinstance(chip, dict) and isinstance(chip.get('text'), str)
+            ]
+            if len(drawable) != (len(chips) if isinstance(chips, list) else 1):
+                logger.warning(f'showrunner_script_previews: dropped malformed chips for cue {cue_id}')
+            if drawable:
+                previews.setdefault(cue_id, []).extend(drawable)  # several plugins may preview one cue
     return previews
 
 

@@ -74,3 +74,36 @@ def test_preview_text_colour_must_be_a_plain_colour_name():
 
     assert is_color('amber') and is_color('deep-purple')
     assert not is_color('red" onmouseover="x') and not is_color(None)
+
+
+def test_get_previews_drops_a_plugin_s_malformed_answer_and_keeps_the_others(monkeypatch):
+    """A plugin that returns the wrong shape loses its own chips, never the page."""
+
+    class Good:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            return {1: [{'text': 'a', 'color': 'teal'}]}
+
+    class ReturnsList:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            return [{'text': 'x'}]
+
+    class ChipsNotAList:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            return {1: 'x'}
+
+    class ChipWithoutText:
+        @showrunner.hookimpl
+        def showrunner_script_previews(self, cues):
+            return {1: [{'color': 'red'}, {'text': 'kept'}, 'not a chip']}
+
+    pm = pluggy.PluginManager('showrunner')
+    pm.add_hookspecs(ShowRunnerSpec)
+    for plugin in (Good(), ReturnsList(), ChipsNotAList(), ChipWithoutText()):
+        pm.register(plugin)
+    monkeypatch.setattr(sr_ui, '_pm', pm)
+
+    previews = _get_previews([cue(1, 1)])
+    assert [c['text'] for c in previews[1]] == ['a', 'kept']
