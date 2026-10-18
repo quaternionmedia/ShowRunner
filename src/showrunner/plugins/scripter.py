@@ -16,6 +16,7 @@ from sqlmodel import select
 
 import showrunner
 from showrunner import ui as _sr_ui
+from showrunner.layers import cue_number_label
 from showrunner.layers import (
     add_layer,
     delete_layer,
@@ -96,6 +97,11 @@ def _parse_pages(lines: list[str]) -> list[dict]:
         pages = [{'label': None, 'lines': []}]
 
     return pages
+
+
+def _cue_number_label(cue: dict) -> str:
+    """The cue number as plugins format it (see showrunner_format_cue_number)."""
+    return cue_number_label(cue.get('number'), cue.get('point'), cue.get('layer'), _sr_ui._pm)
 
 
 def _get_previews(cues: list[dict]) -> dict[int, list[dict]]:
@@ -310,7 +316,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 old = _snapshot_cue(cue_id)
                 if old is not None:
                     changed = {k: old[k] for k in fields if k in old}
-                    desc = f'Edit cue {old["layer"] or ""} {old["number"]}'
+                    desc = f'Edit cue {old["layer"] or ""} {_cue_number_label(old)}'
                     _push_undo(
                         desc,
                         lambda cid=cue_id, prev=changed: _update_cue(
@@ -332,7 +338,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             if record_undo:
                 snap = _snapshot_cue(cue_id)
                 if snap is not None:
-                    desc = f'Delete cue {snap["layer"] or ""} {snap["number"]}'
+                    desc = f'Delete cue {snap["layer"] or ""} {_cue_number_label(snap)}'
                     _push_undo(
                         desc,
                         lambda s=snap: _recreate_cue(s),
@@ -365,7 +371,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         def render_cue_chip(c: dict, compact: bool = False) -> None:
             """Render a draggable, editable cue badge."""
             color = _layer_colour(c['layer'])
-            number = c['number'] if c['number'] is not None else ''
+            number = _cue_number_label(c)
             label_text = f'{(c["layer"] or "")[:1]} {number}'
             cue_id = c['id']
 
@@ -536,7 +542,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 """A boxed chip group with a pointer up to its source cue."""
                 colour = _layer_colour(cue['layer'])
                 colour = colour if is_color(colour) else 'grey'
-                number = cue['number'] if cue['number'] is not None else ''
+                number = _cue_number_label(cue)
                 # grid-column spans both columns so it works with the detail column on or off
                 with ui.element('div').style('grid-column: 1 / -1; margin: 0.4rem 0 0.2rem 3rem;'):
                     with ui.element('div').classes(f'relative text-{colour}').style(

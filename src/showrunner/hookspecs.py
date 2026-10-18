@@ -142,6 +142,15 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_format_cue_number(self, number, point, layer) -> str | None:
+        """Return the display string for a cue number, or None to leave it to other plugins.
+
+        ``number`` is the stored number (a string or None), ``point`` the point (int),
+        and ``layer`` the cue's layer. The first non-empty answer is shown everywhere
+        ShowRunner displays the cue number (script viewer, printouts, CLI).
+        """
+
+    @hookspec
     def showrunner_script_previews(self, cues: list[dict]) -> dict[int, list[dict]] | None:
         """Return preview chips for cues shown in the script viewer.
 

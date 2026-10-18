@@ -25,6 +25,7 @@ from showrunner.config import find_config, load_config
 from showrunner.database import ShowDatabase
 from showrunner.layers import (
     add_layer,
+    cue_number_label,
     delete_layer,
     ensure_layers,
     get_layer_types,
@@ -674,8 +675,9 @@ def cues_list(
     table.add_column("Type", style="dim")
     table.add_column("Notes", style="dim")
 
+    pm = _pm()
     for cue in cues:
-        num = cue.number_label or "—"
+        num = cue_number_label(cue.number, cue.point, cue.layer, pm) or "—"
         table.add_row(
             str(cue.id),
             num,
@@ -731,7 +733,7 @@ def cues_add(
         session.commit()
         session.refresh(cue)
 
-        num_str = cue.number_label or "(unnumbered)"
+        num_str = cue_number_label(cue.number, cue.point, cue.layer, _pm()) or "(unnumbered)"
         console.print(
             f'[green]Added[/green] cue [bold]{num_str} "{cue.name}"[/bold] (id={cue.id}) '
             f'to cue list [bold]"{cue_list.name}"[/bold]'

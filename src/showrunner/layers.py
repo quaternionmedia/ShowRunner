@@ -55,6 +55,20 @@ def is_color(value) -> bool:
     return isinstance(value, str) and bool(_COLOR_RE.match(value))
 
 
+def cue_number_label(number, point, layer, pm=None) -> str:
+    """The cue number as ShowRunner displays it.
+
+    Plugins answer through ``showrunner_format_cue_number``; the first non-empty
+    answer wins. Without one, the number is shown with its point, e.g. ``5`` or ``5.1``.
+    """
+    for label in hook_results(pm, "showrunner_format_cue_number", number=number, point=point, layer=layer):
+        if label:
+            return label
+    if number is None:
+        return ""
+    return f"{number}.{point}" if point else str(number)
+
+
 def hook_results(pm, hook_name: str, **kwargs) -> Iterator:
     """Yield each plugin's return value for *hook_name*; a failing plugin is logged and skipped."""
     if pm is None:

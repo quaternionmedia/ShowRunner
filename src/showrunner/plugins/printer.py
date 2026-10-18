@@ -26,7 +26,8 @@ from sqlmodel import select
 
 
 import showrunner
-from showrunner.layers import COLOR_RGB, get_layers
+from showrunner import ui as _sr_ui
+from showrunner.layers import COLOR_RGB, cue_number_label, get_layers
 from showrunner.models import CUE_ORDER, Cue, CueList, Script
 from showrunner.plugins.db import get_db
 
@@ -401,7 +402,7 @@ def _draw_cue_annotations(
     for cue in relevant:
         layer = cue.layer or ''
         r, g, b = _cue_color(layout, layer, layer_colors)
-        label = f'{layer[:1]}{cue.number_label}'
+        label = f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}'
 
         # Measure the badge.
         pdf.set_font(badge_font_name, badge_font_style, size)
