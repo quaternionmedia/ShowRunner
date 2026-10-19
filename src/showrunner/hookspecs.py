@@ -119,6 +119,64 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_get_layer_types(self) -> dict | list[dict] | None:
+        """Register cue layer backend types.
+
+        Each entry is a dict with keys:
+            type: Unique key stored in ``layers.type`` (e.g. "mix")
+            label: Display name (e.g. "Mix")
+            description: Short description shown in the layer type picker
+            color: Default Quasar colour for new layers of this type
+
+        The first registration of a type wins; duplicates are logged and ignored.
+        A plugin that owns a type acts on cues whose layer has that type.
+        """
+
+    @hookspec
+    def showrunner_get_layers(self) -> dict | list[dict] | None:
+        """Provide layers to add to every show that does not already have them.
+
+        Each entry is a dict with keys ``name``, ``color`` (Quasar colour) and
+        ``type`` (must be registered via ``showrunner_get_layer_types``). Existing
+        layers are never changed; entries with an unknown type are skipped.
+        """
+
+    @hookspec
+    def showrunner_format_cue_number(self, number, point, layer) -> str | None:
+        """Return the display string for a cue number, or None to leave it to other plugins.
+
+        ``number`` is the stored number (a string or None), ``point`` the point (int),
+        and ``layer`` the cue's layer. The first non-empty answer is shown everywhere
+        ShowRunner displays the cue number (script viewer, printouts, CLI).
+        """
+
+    @hookspec
+    def showrunner_cue_changed(self, action, cue, before) -> str | None:
+        """Called after a cue is created, updated or deleted in the script viewer.
+
+        ``action`` is 'create', 'update' or 'delete'. ``cue`` is the cue's dict (id,
+        number, point, name, layer, cue_type, cue_list_id, script_line, script_char):
+        its new state, or for 'delete' the state it had before removal. ``before`` is
+        the state before an update, otherwise None. Undo and drops call it too.
+        Return a message if the plugin could not do what was asked; the viewer shows it.
+        """
+
+    @hookspec
+    def showrunner_script_previews(self, cues: list[dict]) -> dict[int, list[dict]] | None:
+        """Return preview chips for cues shown in the script viewer.
+
+        ``cues`` are the viewer's cue dicts (id, number, point, name, layer,
+        script_line, script_char). Return ``{cue_id: [chip, ...]}`` for the cues
+        this plugin recognises, or ``None``. Each chip is a dict with keys:
+            text: Short label (e.g. "1 Judge")
+            color: Quasar background colour for the chip (default "grey-9")
+            tooltip: Optional hover text
+
+        The viewer shows the chips under the cue's line, and again at the top of
+        each following page until a later cue with chips takes over.
+        """
+
+    @hookspec
     def showrunner_get_status(self) -> dict | list[dict] | None:
         """Return status icon(s) for the global header bar.
 

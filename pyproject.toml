@@ -1,6 +1,6 @@
 [project]
 name = "showrunner"
-version = "0.4.0"
+version = "0.5.0"
 description = "A collection of tools for live performances including script parsing, cue management, and more."
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -53,5 +53,5 @@ select = ["E", "F", "W", "I"]
 "src/showrunner/plugins/scripter.py" = ["E501"]
 
 [build-system]
-requires = ["uv_build>=0.11.2,<0.13"]
+requires = ["uv_build>=0.11.2,<0.14"]
 build-backend = "uv_build"

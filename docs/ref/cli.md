@@ -22,7 +22,12 @@ sr --help
 | `sr cue-lists list <show-id>`            | List cue lists                     |
 | `sr cue-lists create <show-id> <name>`   | Create a cue list                  |
 | `sr cues list <cue-list-id>`             | List cues                          |
-| `sr cues add <cue-list-id> <name>`       | Add a cue (`--number` optional)    |
+| `sr cues add <cue-list-id> <name>`       | Add a cue (`--number`, `--layer` optional) |
+| `sr layers list [--show]`                | List a show's layers               |
+| `sr layers types`                        | List layer types (built-in and plugin) |
+| `sr layers add <name> [-t type] [-c colour]` | Add a layer                    |
+| `sr layers set <name> [--name] [-t type] [-c colour]` | Change a layer          |
+| `sr layers remove <name>`                | Remove a layer (refused while in use) |
 | `sr migration current`                   | Show current schema revision       |
 | `sr migration list`                      | Show migration history             |
 | `sr migration upgrade`                   | Apply pending migrations           |
