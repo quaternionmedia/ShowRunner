@@ -151,6 +151,17 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_cue_changed(self, action, cue, before) -> str | None:
+        """Called after a cue is created, updated or deleted in the script viewer.
+
+        ``action`` is 'create', 'update' or 'delete'. ``cue`` is the cue's dict (id,
+        number, point, name, layer, cue_type, cue_list_id, script_line, script_char):
+        its new state, or for 'delete' the state it had before removal. ``before`` is
+        the state before an update, otherwise None. Undo and drops call it too.
+        Return a message if the plugin could not do what was asked; the viewer shows it.
+        """
+
+    @hookspec
     def showrunner_script_previews(self, cues: list[dict]) -> dict[int, list[dict]] | None:
         """Return preview chips for cues shown in the script viewer.
 

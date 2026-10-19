@@ -310,19 +310,32 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     'script_char': cue.script_char,
                 }
 
+        def _notify_cue(action: str, cue_id: int, old: dict | None = None) -> None:
+            """Tell plugins a cue was created, updated or deleted (see showrunner_cue_changed)."""
+            if action == 'delete':
+                cue, before = old, None
+            else:
+                state = _snapshot_cue(cue_id)
+                cue = state and {'id': cue_id, **state}
+                before = old and {'id': cue_id, **old} if action == 'update' else None
+            if cue is None:
+                return
+            for msg in hook_results(_sr_ui._pm, 'showrunner_cue_changed', action=action, cue=cue, before=before):
+                if msg:
+                    ui.notify(f'TheatreMix not updated: {msg}', type='warning')
+
         def _update_cue(cue_id: int, record_undo: bool = True, **fields) -> None:
             """Update one or more fields on a cue."""
-            if record_undo:
-                old = _snapshot_cue(cue_id)
-                if old is not None:
-                    changed = {k: old[k] for k in fields if k in old}
-                    desc = f'Edit cue {old["layer"] or ""} {_cue_number_label(old)}'
-                    _push_undo(
-                        desc,
-                        lambda cid=cue_id, prev=changed: _update_cue(
-                            cid, False, **prev
-                        ),
-                    )
+            old = _snapshot_cue(cue_id)
+            if record_undo and old is not None:
+                changed = {k: old[k] for k in fields if k in old}
+                desc = f'Edit cue {old["layer"] or ""} {_cue_number_label(old)}'
+                _push_undo(
+                    desc,
+                    lambda cid=cue_id, prev=changed: _update_cue(
+                        cid, False, **prev
+                    ),
+                )
 
             with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
@@ -332,23 +345,26 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     setattr(cue, k, v)
                 s.add(cue)
                 s.commit()
+            if old is not None:
+                _notify_cue('update', cue_id, old)
 
         def _delete_cue(cue_id: int, record_undo: bool = True) -> None:
             """Delete a cue by id."""
-            if record_undo:
-                snap = _snapshot_cue(cue_id)
-                if snap is not None:
-                    desc = f'Delete cue {snap["layer"] or ""} {_cue_number_label(snap)}'
-                    _push_undo(
-                        desc,
-                        lambda s=snap: _recreate_cue(s),
-                    )
+            snap = _snapshot_cue(cue_id)
+            if record_undo and snap is not None:
+                desc = f'Delete cue {snap["layer"] or ""} {_cue_number_label(snap)}'
+                _push_undo(
+                    desc,
+                    lambda s=snap: _recreate_cue(s),
+                )
 
             with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
                 if cue is not None:
                     s.delete(cue)
                     s.commit()
+            if snap is not None:
+                _notify_cue('delete', cue_id, snap)
 
         def _recreate_cue(snap: dict) -> None:
             """Re-create a cue from a snapshot dict (used by undo of delete)."""
@@ -356,6 +372,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 cue = Cue(**snap)
                 s.add(cue)
                 s.commit()
+                s.refresh(cue)
+                new_id = cue.id
+            _notify_cue('create', new_id)
 
         # ---- render helpers -------------------------------------------------
         def _layer_colour(name: str | None) -> str:
@@ -1225,6 +1244,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 ui.notify(f'Failed to create cue: {exc}', type='negative')
                 return
 
+            _notify_cue('create', new_id)
             desc = f'Add {layer} cue'
             _push_undo(desc, lambda cid=new_id: _delete_cue(cid, False))
 
