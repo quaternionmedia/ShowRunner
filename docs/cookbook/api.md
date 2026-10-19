@@ -20,6 +20,18 @@ curl http://localhost:8000/db/shows
 curl -X POST "http://localhost:8000/db/shows?name=Hamlet&venue=Globe%20Theatre"
 ```
 
+### Manage layers via HTTP
+
+```bash
+curl http://localhost:8000/db/layer-types
+curl http://localhost:8000/db/shows/1/layers
+curl -X POST "http://localhost:8000/db/shows/1/layers?name=FX&type=generic&color=pink"
+curl -X PUT "http://localhost:8000/db/layers/6?name=FX2"
+curl -X DELETE http://localhost:8000/db/layers/6
+```
+
+An unknown type or colour returns 422; deleting a layer that cues use returns 409.
+
 ---
 
 ### Check a plugin's status

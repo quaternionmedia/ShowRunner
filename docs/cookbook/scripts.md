@@ -45,3 +45,52 @@ db.close()
 ```bash
 sr scripts list 1
 ```
+
+### Format the script viewer
+
+The `/script` viewer labels every line with a block type (using Fountain rules) and styles it:
+
+| Block           | Fountain source                                   | Default style                      |
+|-----------------|---------------------------------------------------|------------------------------------|
+| `heading`       | `INT.` / `EXT.` / `EST.` / `I/E`, or a leading `.` | bold, uppercase, amber             |
+| `action`        | anything else                                     | plain                              |
+| `character`     | an uppercase line after a blank line, before text  | bold, uppercase, indented          |
+| `parenthetical` | `(...)` inside a speech                           | italic, grey, indented             |
+| `dialogue`      | the rest of a speech                              | indented, narrower                 |
+| `lyric`         | a leading `~`                                     | italic, blue, indented             |
+| `transition`    | `CUT TO:` or a leading `>`                        | uppercase, right-aligned           |
+| `section`       | a leading `#`                                     | bold, larger                       |
+| `synopsis`      | a leading `=`                                     | italic, grey                       |
+| `comment`       | `/* boneyard */` or `[[note]]`                    | italic, grey, shaded               |
+
+Override any block in `show.toml`. Each key is optional; unknown blocks, unknown keys and unsafe values are logged and ignored:
+
+```toml
+[plugins.showscripter]
+line-height = "2.2"       # leave room above each line for the cue chips (default 2)
+show-previews = false     # start with preview chips hidden
+
+[plugins.showscripter.format.character]
+indent = "30%"            # margin-left
+bold = false
+
+[plugins.showscripter.format.dialogue]
+indent = "15%"
+width = "55%"             # max-width
+color = "#e0e0e0"
+```
+
+| Key          | Effect                        | Value          |
+|--------------|-------------------------------|----------------|
+| `indent`     | `margin-left`                 | CSS length     |
+| `width`      | `max-width`                   | CSS length     |
+| `align`      | `text-align`                  | `left`, `right`, `center` |
+| `size`       | `font-size`                   | CSS length     |
+| `color`      | text colour                   | CSS colour     |
+| `background` | background colour             | CSS colour     |
+| `font`       | `font-family`                 | CSS font name  |
+| `bold`, `italic`, `uppercase` | text weight, style, case | `true` / `false` |
+
+Cues float above the text at their character position, so they never move the words. The page bars stay pinned when you change pages.
+
+Page bars sit above and below the script. The page and cue list you are on are remembered per browser and script, and the Cue Details and Previews toggles are remembered per browser, so a refresh reopens them.
