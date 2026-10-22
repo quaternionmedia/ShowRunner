@@ -218,7 +218,8 @@ def _remap_cues_on_script_edit(session, flush_context, instances) -> None:
             .where(CueList.show_id == obj.show_id, Cue.script_line.is_not(None))
         ).scalars()
         for cue in cues:
-            line = min(max(cue.script_line, 0), len(mapping) - 1)
-            cue.script_line = mapping[line]
+            old_idx = min(max(cue.script_line - 1, 0), len(mapping) - 1)  # script_line is 1-based
+            new_idx = mapping[old_idx]
+            cue.script_line = new_idx + 1
             if cue.script_char is not None:
-                cue.script_char = min(cue.script_char, len(new_lines[cue.script_line]))
+                cue.script_char = min(cue.script_char, len(new_lines[new_idx].rstrip('\r')))

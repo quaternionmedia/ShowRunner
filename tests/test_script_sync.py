@@ -52,8 +52,8 @@ def _seed(db, content):
         script = Script(show_id=show.id, title='T', content=content)
         s.add(script)
         s.commit()
-        s.add(Cue(cue_list_id=cl.id, name='hall', script_line=2, script_char=4))
-        s.add(Cue(cue_list_id=cl.id, name='exit', script_line=7, script_char=0))
+        s.add(Cue(cue_list_id=cl.id, name='hall', script_line=3, script_char=4))
+        s.add(Cue(cue_list_id=cl.id, name='exit', script_line=8, script_char=0))
         s.add(Cue(cue_list_id=cl.id, name='loose', script_line=None))
         s.commit()
         return script.id
@@ -70,7 +70,7 @@ def test_editing_script_moves_cues_with_text(db):
         script = s.get(Script, script_id)
         script.content = 'PROLOGUE\n' + OLD
         s.commit()
-    assert _positions(db) == {'hall': (3, 4), 'exit': (8, 0), 'loose': (None, None)}
+    assert _positions(db) == {'hall': (4, 4), 'exit': (9, 0), 'loose': (None, None)}
 
 
 def test_unchanged_script_leaves_cues_alone(db):
@@ -79,4 +79,12 @@ def test_unchanged_script_leaves_cues_alone(db):
         script = s.get(Script, script_id)
         script.title = 'Renamed'
         s.commit()
-    assert _positions(db) == {'hall': (2, 4), 'exit': (7, 0), 'loose': (None, None)}
+    assert _positions(db) == {'hall': (3, 4), 'exit': (8, 0), 'loose': (None, None)}
+
+
+def test_char_position_survives_line_ending_change(db):
+    script_id = _seed(db, OLD)
+    with db.session() as s:
+        s.get(Script, script_id).content = OLD.replace('\n', '\r\n')
+        s.commit()
+    assert _positions(db) == {'hall': (3, 4), 'exit': (8, 0), 'loose': (None, None)}
