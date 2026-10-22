@@ -11,6 +11,7 @@ this module and can be overridden via ``[plugins.showprinter]`` settings in
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -27,7 +28,7 @@ from sqlmodel import select
 
 import showrunner
 from showrunner import ui as _sr_ui
-from showrunner.layers import COLOR_RGB, cue_number_label, get_layers
+from showrunner.layers import COLOR_RGB, cue_number_label, get_layers, hook_results
 from showrunner.models import CUE_ORDER, Cue, CueList, Script
 from showrunner.plugins.db import get_db
 
@@ -121,7 +122,7 @@ def _cue_color(layout: dict, layer: str, layer_colors: dict[str, str]) -> tuple[
     override = layout.get('cues', {}).get('colors', {}).get(layer)
     if override is not None:
         return (int(override[0]), int(override[1]), int(override[2]))
-    return COLOR_RGB.get(layer_colors.get(layer, 'grey'), COLOR_RGB['grey'])
+    return _colour_rgb(layer_colors.get(layer, 'grey'))
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +138,79 @@ _PDF_PUNCT = str.maketrans({
 })
 
 
+# Quasar's 500-shade palette, for preview chip colours beyond the layer colours.
+_QUASAR_RGB = {
+    'red': (244, 67, 54), 'pink': (233, 30, 99), 'purple': (156, 39, 176),
+    'deep-purple': (103, 58, 183), 'indigo': (63, 81, 181), 'blue': (33, 150, 243),
+    'light-blue': (3, 169, 244), 'cyan': (0, 188, 212), 'teal': (0, 150, 136),
+    'green': (76, 175, 80), 'light-green': (139, 195, 74), 'lime': (205, 220, 57),
+    'yellow': (255, 235, 59), 'amber': (255, 193, 7), 'orange': (255, 152, 0),
+    'deep-orange': (255, 87, 34), 'brown': (121, 85, 72), 'grey': (158, 158, 158),
+    'blue-grey': (96, 125, 139), 'black': (0, 0, 0), 'white': (255, 255, 255),
+}
+
+
+def _colour_rgb(colour: str | None) -> tuple[int, int, int]:
+    """(R, G, B) for a Quasar colour name, shade suffix ignored (``grey-9`` is grey).
+
+    The seven app layer colours keep their own values; everything else comes from the
+    Quasar palette. Unknown or missing names fall back to grey.
+    """
+    if not isinstance(colour, str):
+        return _QUASAR_RGB['grey']
+    base = re.sub(r'-\d+$', '', colour)
+    return COLOR_RGB.get(base) or _QUASAR_RGB.get(base) or _QUASAR_RGB['grey']
+
+
 def _latin1(text: str) -> str:
     """Make *text* safe for core fonts: map typographic punctuation, replace the rest."""
     return text.translate(_PDF_PUNCT).encode('latin-1', 'replace').decode('latin-1')
+
+
+@dataclass(frozen=True)
+class CuePrintOptions:
+    """Which cue details to print: badges and names in the margin, notes under the name,
+    and preview chips under their script line."""
+
+    markers: bool = True
+    names: bool = True
+    notes: bool = False
+    previews: bool = False
+
+
+def _collect_previews(cues: list[Cue]) -> dict[int, list[dict]]:
+    """Preview chips per cue id, from the ``showrunner_script_previews`` hook.
+
+    Same contract as the script viewer: wrong-shaped answers are skipped.
+    """
+    pm = _sr_ui._pm
+    if pm is None or not cues:
+        return {}
+    cue_dicts = [
+        {
+            'id': c.id,
+            'number': c.number,
+            'point': c.point,
+            'name': c.name,
+            'layer': c.layer,
+            'script_line': c.script_line,
+            'script_char': c.script_char,
+        }
+        for c in cues
+    ]
+    previews: dict[int, list[dict]] = {}
+    for result in hook_results(pm, 'showrunner_script_previews', cues=cue_dicts):
+        if not isinstance(result, dict):
+            continue
+        for cue_id, chips in result.items():
+            if not isinstance(chips, list):
+                continue
+            drawable = [
+                chip for chip in chips if isinstance(chip, dict) and isinstance(chip.get('text'), str)
+            ]
+            if drawable:
+                previews.setdefault(cue_id, []).extend(drawable)
+    return previews
 
 
 def _align_flag(align: str) -> str:
@@ -152,8 +223,12 @@ def generate_pdf(
     cues: list[Cue],
     layout: dict[str, Any],
     layer_colors: dict[str, str],
+    options: CuePrintOptions | None = None,
 ) -> bytes:
     """Render *script* with *cues* to PDF bytes using *layout* settings."""
+
+    options = options or CuePrintOptions()
+    previews = _collect_previews(cues) if options.previews else {}
 
     page_cfg = layout.get('page', {})
     pw = page_cfg.get('width', 215.9)
@@ -273,12 +348,27 @@ def generate_pdf(
         y_before = pdf.get_y()
         pdf.set_x(cell_x)
         line_h = font_size * 0.352778 * 1.4  # pt→mm × leading
-        pdf.multi_cell(cell_w, line_h, text, align=_align_flag(style['align']))
+        # Empty elements (e.g. a blank lyric line) only take up a line of space. A
+        # multi_cell here could start a page that the spacing pushes past, leaving it blank.
+        if text.strip():
+            pdf.multi_cell(cell_w, line_h, text, align=_align_flag(style['align']))
+        else:
+            pdf.set_y(pdf.get_y() + line_h)
+
+        lines_for_elem = elem_lines[idx] if idx < len(elem_lines) else []
+
+        # Preview chips sit in the flow, under the element they belong to.
+        if previews:
+            for ln in lines_for_elem:
+                for c in cues_by_line.get(ln, []):
+                    if c.id in previews:
+                        _draw_preview_chips(
+                            pdf, c, previews[c.id], cell_x, cell_w, layout, layer_colors
+                        )
         y_after = pdf.get_y()
 
         # Draw cue annotations for original lines covered by this element.
         # Save/restore Y so margin annotations don't shift the text cursor.
-        lines_for_elem = elem_lines[idx] if idx < len(elem_lines) else []
         saved_y = pdf.get_y()
         _draw_cue_annotations(
             pdf,
@@ -293,6 +383,7 @@ def generate_pdf(
             cue_space,
             layout,
             layer_colors,
+            options,
         )
         pdf.set_y(saved_y)
 
@@ -306,6 +397,9 @@ def generate_pdf(
         _font, _style = _split_font(footer_cfg.get('font', 'Helvetica'))
         footer_size = footer_cfg.get('size', 8)
         footer_text_tmpl = footer_cfg.get('text', 'Page {page}')
+        # The footer sits below the bottom margin; without this, each footer cell
+        # would start a new page.
+        pdf.set_auto_page_break(auto=False, margin=mb)
         for page_num in range(1, pdf.pages_count + 1):
             pdf.page = page_num
             pdf.set_font(_font, _style, footer_size)
@@ -344,33 +438,110 @@ def _assign_lines_to_elements(
 ) -> None:
     """Best-effort mapping of original content lines to parsed elements.
 
-    Walks through the raw lines and assigns each non-blank line to the next
-    element whose text hasn't been fully covered.  This is heuristic — it
-    works well for standard Fountain scripts but edge cases (e.g., boneyards
-    spanning many lines) may slip through.
+    Each element is located by searching forward from the last line it used for
+    its first text line, then it takes as many non-blank lines as its text has.
+    Lines the parser drops (title page, boneyards, notes, page breaks) are simply
+    skipped by the search, so they cannot push later elements out of step.
+    Elements whose first line cannot be found are left unmapped.
     """
-    elem_idx = 0
     skip_types = {
         ElementType.BONEYARD,
         ElementType.NOTE,
         ElementType.TITLEENTRY,
         ElementType.PAGEBREAK,
     }
+    cursor = 0  # 0-based index into content_lines
 
-    for line_no, raw in enumerate(content_lines, start=1):
-        stripped = raw.strip()
-        if not stripped:
+    for idx, elem in enumerate(elements):
+        if elem.type in skip_types:
             continue
-        # Advance past elements we want to skip.
-        while elem_idx < len(elements) and elements[elem_idx].type in skip_types:
-            elem_idx += 1
-        if elem_idx >= len(elements):
-            break
-        elem_lines[elem_idx].append(line_no)
-        # Heuristic: once we've accumulated enough lines, move forward.
-        elem_text_lines = len((elements[elem_idx].text or '').split('\n'))
-        if len(elem_lines[elem_idx]) >= elem_text_lines:
-            elem_idx += 1
+        # Character elements keep their name outside .text.
+        text_or_name = elem.text or getattr(elem, 'name', None) or ''
+        first = next((t.strip() for t in text_or_name.split('\n') if t.strip()), '')
+        if not first:
+            continue
+        start = next(
+            (j for j in range(cursor, len(content_lines)) if first in content_lines[j]),
+            None,
+        )
+        if start is None:
+            continue
+        # Blank lines inside an element's text have no raw counterpart in the loop below.
+        # Character elements keep their name outside .text, so they always take one line.
+        need = max(1, sum(1 for t in (elem.text or '').split('\n') if t.strip()))
+        k = start
+        while k < len(content_lines) and len(elem_lines[idx]) < need:
+            if content_lines[k].strip():
+                elem_lines[idx].append(k + 1)
+            k += 1
+        cursor = k
+
+
+def _draw_preview_chips(
+    pdf: FPDF,
+    cue: Cue,
+    chips: list[dict],
+    x: float,
+    width: float,
+    layout: dict,
+    layer_colors: dict[str, str],
+) -> None:
+    """Print a cue's preview chips under its script element.
+
+    The cue's label comes first in the cue's colour, then each chip is a box with
+    a border in the chip's own colour. Boxes wrap onto a new row within *width*.
+    """
+    cue_cfg = layout.get('cues', {})
+    font_name, font_style = _split_font(cue_cfg.get('name-font', 'Helvetica'))
+    size = cue_cfg.get('name-size', 10) - 1
+    layer = cue.layer or ''
+    label = _latin1(f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}:')
+
+    box_h = size * 0.352778 * 1.9
+    gap = 1.0  # between boxes, and between rows
+    pad = 1.2  # text inset inside each box
+    frame = 1.0  # space between the chips and the outline around the group
+    right = x + width
+
+    pdf.set_font(font_name, font_style, size)
+    top_y = pdf.get_y() + frame + gap
+    row_y = top_y
+    cx = x
+
+    pdf.set_text_color(*_cue_color(layout, layer, layer_colors))
+    label_w = pdf.get_string_width(label) + 1
+    pdf.set_xy(cx, row_y)
+    pdf.cell(label_w, box_h, label)
+    cx += label_w + gap
+    used_right = cx
+
+    for chip in chips:
+        text = _latin1(chip['text'])
+        chip_w = pdf.get_string_width(text) + 2 * pad
+        if cx > x + label_w and cx + chip_w > right:  # wrap to a new row
+            row_y += box_h + gap
+            cx = x
+        pdf.set_draw_color(*_colour_rgb(chip.get('color')))
+        pdf.set_line_width(0.3)
+        pdf.rect(cx, row_y, chip_w, box_h, style='D')
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(cx + pad, row_y)
+        pdf.cell(chip_w - 2 * pad, box_h, text)
+        cx += chip_w + gap
+        used_right = max(used_right, cx - gap)
+
+    # Outline around the whole group (label and chips) in the cue's layer colour.
+    bottom_y = row_y + box_h
+    pdf.set_draw_color(*_cue_color(layout, layer, layer_colors))
+    pdf.set_line_width(0.4)
+    pdf.rect(
+        x,
+        top_y - frame,
+        min(used_right - x + frame, width),
+        bottom_y - top_y + 2 * frame,
+        style='D',
+    )
+    pdf.set_xy(x, bottom_y + frame + gap)
 
 
 def _draw_cue_annotations(
@@ -386,18 +557,22 @@ def _draw_cue_annotations(
     space: float,
     layout: dict,
     layer_colors: dict[str, str],
+    options: CuePrintOptions,
 ) -> None:
-    """Draw cue badge annotations in the right margin beside an element."""
+    """Draw cue annotations in the right margin beside an element.
+
+    Each cue gets a box: its name and notes (left, notes in italics) and its
+    badge (right). *options* decides which parts are drawn.
+    """
     relevant: list[Cue] = []
     for ln in lines_for_elem:
         relevant.extend(cues_by_line.get(ln, []))
-    if not relevant:
+    if not relevant or not (options.markers or options.names or options.notes):
         return
 
     cue_cfg = layout.get('cues', {})
 
     badge_font_name, badge_font_style = _split_font(font)
-    pdf.set_font(badge_font_name, badge_font_style, size)
     badge_h = size * 0.352778 * 1.3
 
     name_font_spec = cue_cfg.get('name-font', 'Helvetica')
@@ -417,30 +592,42 @@ def _draw_cue_annotations(
     for cue in relevant:
         layer = cue.layer or ''
         r, g, b = _cue_color(layout, layer, layer_colors)
-        label = _latin1(f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}')
+        label = (
+            _latin1(f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}')
+            if options.markers
+            else ''
+        )
+
+        # Text for the name column: the cue name, then its notes in italics.
+        # Each entry is (text, font, style, size, line height, measured height).
+        text_lines: list[tuple[str, str, str, float, float, float]] = []
+        for enabled, text, f_style in (
+            (options.names, cue.name, name_font_style),
+            (options.notes, cue.notes, 'I'),
+        ):
+            if not enabled or not text:
+                continue
+            text = _latin1(text)
+            pdf.set_font(name_font_name, f_style, name_size)
+            # multi_cell dry-run measures the wrapped height.
+            h = pdf.multi_cell(
+                max_name_w, name_line_h, text, align='R', dry_run=True, output='HEIGHT'
+            )
+            text_lines.append((text, name_font_name, f_style, name_size, name_line_h, h))
+        text_h = sum(entry[5] for entry in text_lines)
+
+        if not label and not text_lines:
+            continue
 
         # Measure the badge.
-        pdf.set_font(badge_font_name, badge_font_style, size)
-        label_w = pdf.get_string_width(label) + 3
+        label_w = 0.0
+        if label:
+            pdf.set_font(badge_font_name, badge_font_style, size)
+            label_w = pdf.get_string_width(label) + 3
 
-        # Measure the cue name height so we can size the border box.
-        name_text = _latin1(cue.name or '')
-        name_h = 0.0
-        if name_text:
-            pdf.set_font(name_font_name, name_font_style, name_size)
-            # Use multi_cell dry-run to measure wrapped height.
-            name_h = pdf.multi_cell(
-                max_name_w,
-                name_line_h,
-                name_text,
-                align='R',
-                dry_run=True,
-                output='HEIGHT',
-            )
-
-        content_h = max(badge_h, name_h)
+        content_h = max(badge_h if label else 0.0, text_h)
         # Total box width = name column + gap + badge.
-        name_col_w = (max_name_w + 1) if name_text else 0
+        name_col_w = (max_name_w + 1) if text_lines else 0
         box_w = name_col_w + label_w + 2 * pad
         box_h = content_h + 2 * pad
         box_x = x - box_w
@@ -462,21 +649,25 @@ def _draw_cue_annotations(
             pdf.rect(box_x, box_y, box_w, box_h, style='D')
 
         # Draw badge inside the box (right-aligned).
-        bx = x - pad - label_w
-        by = box_y + pad
-        pdf.set_fill_color(r, g, b)
-        pdf.set_text_color(255, 255, 255)
-        pdf.rect(bx, by, label_w, badge_h, style='F')
-        pdf.set_xy(bx, by)
-        pdf.cell(label_w, badge_h, label, align='C')
+        text_right = x - pad
+        if label:
+            bx = x - pad - label_w
+            by = box_y + pad
+            pdf.set_fill_color(r, g, b)
+            pdf.set_text_color(255, 255, 255)
+            pdf.rect(bx, by, label_w, badge_h, style='F')
+            pdf.set_xy(bx, by)
+            pdf.cell(label_w, badge_h, label, align='C')
+            text_right = bx - 1
 
-        # Draw cue name to the left of the badge.
-        if name_text:
-            pdf.set_font(name_font_name, name_font_style, name_size)
+        # Draw the name and notes stacked to the left of the badge (or the box edge).
+        ty = box_y + pad
+        for text, f_name, f_style, f_size, f_line_h, h in text_lines:
+            pdf.set_font(f_name, f_style, f_size)
             pdf.set_text_color(r, g, b)
-            name_x = bx - max_name_w - 1
-            pdf.set_xy(name_x, by)
-            pdf.multi_cell(max_name_w, name_line_h, name_text, align='R')
+            pdf.set_xy(text_right - max_name_w, ty)
+            pdf.multi_cell(max_name_w, f_line_h, text, align='R')
+            ty += h
 
         y = box_y + box_h + space
 
@@ -499,6 +690,10 @@ async def export_script_pdf(
     script_id: int,
     cue_list_id: int | None = None,
     layout_path: str | None = None,
+    markers: bool = True,
+    names: bool = True,
+    notes: bool = False,
+    previews: bool = False,
 ):
     """Export a script with cue annotations as a PDF.
 
@@ -512,6 +707,9 @@ async def export_script_pdf(
     layout_path:
         Optional filesystem path to a TOML layout override. Falls back to
         the built-in ``pdf_layout.toml``.
+    markers, names, notes, previews:
+        Which cue details to print: the cue-number badge, the cue name,
+        the cue notes, and the plugin preview chips under their script line.
     """
     db = get_db()
 
@@ -570,7 +768,8 @@ async def export_script_pdf(
         ]
 
     layout = _load_layout(layout_path)
-    pdf_bytes = generate_pdf(script_obj, cue_list, layout, layer_colors)
+    options = CuePrintOptions(markers=markers, names=names, notes=notes, previews=previews)
+    pdf_bytes = generate_pdf(script_obj, cue_list, layout, layer_colors, options)
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M')
     filename = f'{script_title} {timestamp}.pdf'
