@@ -162,6 +162,7 @@ def _load_cues(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
                 'number': c.number,
                 'point': c.point,
                 'name': c.name,
+                'notes': c.notes,
                 'layer': c.layer,
                 'script_line': c.script_line,
                 'script_char': c.script_char,
@@ -491,15 +492,26 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     .classes('w-32')
                     .style(f'color: {color};')
                 )
-                # Save on blur / enter for both fields
-                for inp, field in [(num_input, 'number'), (name_input, 'name')]:
+                # Textarea so long notes wrap inside the detail column
+                notes_input = (
+                    ui.textarea(
+                        value=c['notes'] or '',
+                        placeholder='notes',
+                    )
+                    .props('dense borderless autogrow')
+                    .classes('flex-1 min-w-0')
+                    .style('color: grey; font-style: italic; white-space: pre-wrap;')
+                )
+                # Save on blur for all fields; enter saves the single-line ones
+                for inp, field in [(num_input, 'number'), (name_input, 'name'), (notes_input, 'notes')]:
 
                     def _save(_, cid=c['id'], f=field, el=inp):
-                        val = el.value or None if f == 'number' else el.value
+                        val = el.value or None if f in ('number', 'notes') else el.value
                         _update_cue(cid, True, **{f: val})
 
                     inp.on('blur', _save)
-                    inp.on('keydown.enter', _save)
+                    if field != 'notes':
+                        inp.on('keydown.enter', _save)
 
         def render_script_content():
             """Render the current page of script lines with inline cue markers."""
