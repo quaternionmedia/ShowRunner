@@ -40,6 +40,10 @@ with db.session() as s:
 db.close()
 ```
 
+### Edit a script
+
+Edit `Script.content` in the admin panel (`/admin`) or through the database. When the text changes, every cue in the show that has a script position moves with its text: a line inserted above a cue shifts it down, and a cue on an edited line stays on that line. Unpositioned cues are left alone. Cues on a deleted line move to the line that followed it.
+
 ### List scripts for a show
 
 ```bash

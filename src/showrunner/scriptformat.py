@@ -6,6 +6,7 @@ into the defaults; ``block_css`` turns one style into an inline CSS string.
 """
 
 import re
+from difflib import SequenceMatcher
 
 from loguru import logger
 
@@ -98,6 +99,28 @@ def classify_lines(lines: list[str]) -> list[str]:
             types[i] = 'character'
             dialogue = True
     return types
+
+
+def map_script_lines(old: str, new: str) -> list[int]:
+    """New line index for every old line, so cues follow the text they sit on.
+
+    shortcut: line-level diff, so a cue on an edited line keeps its line and
+    only its char offset is clamped; upgrade to a character-level diff if that bites.
+    """
+    # CRLF vs LF is not an edit: strip the \r so a line-ending change doesn't mark every line changed.
+    old_lines = [line.rstrip('\r') for line in old.split('\n')]
+    new_lines = [line.rstrip('\r') for line in new.split('\n')]
+    mapping = [0] * len(old_lines)
+    ops = SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes()
+    for tag, i1, i2, j1, j2 in ops:
+        for i in range(i1, i2):
+            if tag == 'equal':
+                mapping[i] = j1 + i - i1
+            elif j2 > j1:  # replaced: pair lines in order, extras go to the last new line
+                mapping[i] = j1 + min(i - i1, j2 - j1 - 1)
+            else:  # deleted: the line that now follows the gap
+                mapping[i] = j1
+    return [min(m, len(new_lines) - 1) for m in mapping]
 
 
 def _is_character(text: str) -> bool:

@@ -8,8 +8,11 @@ with SQLite by default.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Integer, UniqueConstraint, cast
+from sqlalchemy import Integer, UniqueConstraint, cast, event, inspect, select
+from sqlalchemy.orm import Session
 from sqlmodel import Field, Relationship, SQLModel
+
+from showrunner.scriptformat import map_script_lines
 
 
 def _utcnow() -> datetime:
@@ -195,3 +198,27 @@ class Config(SQLModel, table=True):
 # Sort cues numerically (10 after 2); unnumbered first.
 # ponytail: non-numeric numbers (e.g. "q42") cast to 0 and tie-break as text.
 CUE_ORDER = (cast(Cue.number, Integer), Cue.number, Cue.point)
+
+
+@event.listens_for(Session, 'before_flush')
+def _remap_cues_on_script_edit(session, flush_context, instances) -> None:
+    """When a script's text changes, move every positioned cue of its show with the text."""
+    for obj in list(session.dirty):
+        if not isinstance(obj, Script) or not inspect(obj).attrs.content.history.has_changes():
+            continue
+        old = session.execute(select(Script.content).where(Script.id == obj.id)).scalar()
+        new = obj.content or ''
+        if not old or old == new:
+            continue
+        mapping = map_script_lines(old, new)
+        new_lines = new.split('\n')
+        cues = session.execute(
+            select(Cue)
+            .join(CueList, Cue.cue_list_id == CueList.id)
+            .where(CueList.show_id == obj.show_id, Cue.script_line.is_not(None))
+        ).scalars()
+        for cue in cues:
+            line = min(max(cue.script_line, 0), len(mapping) - 1)
+            cue.script_line = mapping[line]
+            if cue.script_char is not None:
+                cue.script_char = min(cue.script_char, len(new_lines[cue.script_line]))
