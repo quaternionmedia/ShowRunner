@@ -129,6 +129,19 @@ def _cue_color(layout: dict, layer: str, layer_colors: dict[str, str]) -> tuple[
 # ---------------------------------------------------------------------------
 
 
+# fpdf2's built-in core fonts (Helvetica, Courier, ...) only cover Latin-1.
+_PDF_PUNCT = str.maketrans({
+    '‘': "'", '’': "'", '‚': "'",
+    '“': '"', '”': '"', '„': '"',
+    '–': '-', '—': '-', '…': '...',
+})
+
+
+def _latin1(text: str) -> str:
+    """Make *text* safe for core fonts: map typographic punctuation, replace the rest."""
+    return text.translate(_PDF_PUNCT).encode('latin-1', 'replace').decode('latin-1')
+
+
 def _align_flag(align: str) -> str:
     """Convert a layout align value to an fpdf2 align character."""
     return {'left': 'L', 'center': 'C', 'right': 'R', 'justify': 'J'}.get(align, 'L')
@@ -206,6 +219,7 @@ def generate_pdf(
                 .replace('{date}', date_str)
                 .replace('{time}', time_str)
             )
+            text = _latin1(text)
             pdf.set_xy(ml, mt / 2)
             pdf.cell(pw - ml - mr, 5, text, align='L')
 
@@ -241,6 +255,7 @@ def generate_pdf(
             text = f'({text})'
         if style.get('uppercase', False):
             text = text.upper()
+        text = _latin1(text)
 
         # Space before
         space_before = style.get('space-before', 0)
@@ -295,8 +310,8 @@ def generate_pdf(
             pdf.page = page_num
             pdf.set_font(_font, _style, footer_size)
             pdf.set_text_color(160, 160, 160)
-            text = footer_text_tmpl.replace('{title}', title).replace(
-                '{page}', str(page_num)
+            text = _latin1(
+                footer_text_tmpl.replace('{title}', title).replace('{page}', str(page_num))
             )
             pdf.set_xy(ml, ph - mb + 2)
             pdf.cell(pw - ml - mr, 5, text, align='C')
@@ -402,14 +417,14 @@ def _draw_cue_annotations(
     for cue in relevant:
         layer = cue.layer or ''
         r, g, b = _cue_color(layout, layer, layer_colors)
-        label = f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}'
+        label = _latin1(f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}')
 
         # Measure the badge.
         pdf.set_font(badge_font_name, badge_font_style, size)
         label_w = pdf.get_string_width(label) + 3
 
         # Measure the cue name height so we can size the border box.
-        name_text = cue.name or ''
+        name_text = _latin1(cue.name or '')
         name_h = 0.0
         if name_text:
             pdf.set_font(name_font_name, name_font_style, name_size)
