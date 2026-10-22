@@ -26,7 +26,7 @@ from showrunner.models import Actor, Config, Cue, CueList, CueLog, Layer, Script
 if HAS_SQLADMIN:
 
     class ShowAdmin(ModelView, model=Show):
-        column_list = [Show.id, Show.name, Show.venue, Show.created_at]
+        column_list = [Show.id, Show.name, Show.venue, Show.created_at, Show.updated_at]
         column_searchable_list = [Show.name, Show.venue]
         column_sortable_list = [Show.id, Show.name, Show.created_at]
         name = 'Show'
@@ -86,6 +86,10 @@ if HAS_SQLADMIN:
             Cue.cue_type,
             Cue.color,
             Cue.sequence,
+            Cue.notes,
+            Cue.script_line,
+            Cue.script_char,
+            Cue.created_at,
         ]
         column_searchable_list = [Cue.name, Cue.layer]
         column_sortable_list = [Cue.id, Cue.number, Cue.point, Cue.layer, Cue.sequence]
