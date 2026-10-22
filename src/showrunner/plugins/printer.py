@@ -345,6 +345,7 @@ def generate_pdf(
         if cell_w < 10:
             cell_w = 10
 
+        page_before = pdf.page
         y_before = pdf.get_y()
         pdf.set_x(cell_x)
         line_h = font_size * 0.352778 * 1.4  # pt→mm × leading
@@ -368,13 +369,16 @@ def generate_pdf(
         y_after = pdf.get_y()
 
         # Draw cue annotations for original lines covered by this element.
-        # Save/restore Y so margin annotations don't shift the text cursor.
+        # They stay on the page the element ends on: an automatic page break here
+        # would start a page holding only markers. Y is saved and restored on that page.
         saved_y = pdf.get_y()
+        annot_top = y_before if pdf.page == page_before else pdf.t_margin
+        pdf.set_auto_page_break(auto=False, margin=mb)
         _draw_cue_annotations(
             pdf,
             lines_for_elem,
             cues_by_line,
-            y_before,
+            annot_top,
             y_after,
             pw,
             cue_margin_right,
@@ -385,6 +389,7 @@ def generate_pdf(
             layer_colors,
             options,
         )
+        pdf.set_auto_page_break(auto=True, margin=mb)
         pdf.set_y(saved_y)
 
         # Space after
@@ -431,6 +436,24 @@ def _split_font(spec: str) -> tuple[str, str]:
     return family, style
 
 
+def _is_text_line(raw: str) -> bool:
+    """True for a raw line that belongs to element text (not blank, not a [[note]])."""
+    stripped = raw.strip()
+    return bool(stripped) and not (stripped.startswith('[[') and stripped.endswith(']]'))
+
+
+def _line_matches(elem, first: str, raw: str) -> bool:
+    """Whether raw line *raw* is where *elem* starts.
+
+    A character must match its whole name line (``MEG`` or ``MEG (V.O.)``), so a name
+    inside an action sentence can't match. Other elements match on their first line.
+    """
+    if elem.type == ElementType.CHARACTER:
+        base = raw.strip().lstrip('@').rstrip('^ ').rstrip()  # '^' marks dual dialogue
+        return base == first or base.startswith(first + ' (')
+    return first in raw
+
+
 def _assign_lines_to_elements(
     content_lines: list[str],
     elements: list,
@@ -461,17 +484,17 @@ def _assign_lines_to_elements(
         if not first:
             continue
         start = next(
-            (j for j in range(cursor, len(content_lines)) if first in content_lines[j]),
+            (j for j in range(cursor, len(content_lines)) if _line_matches(elem, first, content_lines[j])),
             None,
         )
         if start is None:
             continue
-        # Blank lines inside an element's text have no raw counterpart in the loop below.
-        # Character elements keep their name outside .text, so they always take one line.
+        # Blank lines and [[notes]] have no counterpart in the element's text. Character
+        # elements keep their name outside .text, so they always take one line.
         need = max(1, sum(1 for t in (elem.text or '').split('\n') if t.strip()))
         k = start
         while k < len(content_lines) and len(elem_lines[idx]) < need:
-            if content_lines[k].strip():
+            if _is_text_line(content_lines[k]):
                 elem_lines[idx].append(k + 1)
             k += 1
         cursor = k
@@ -490,6 +513,7 @@ def _draw_preview_chips(
 
     The cue's label comes first in the cue's colour, then each chip is a box with
     a border in the chip's own colour. Boxes wrap onto a new row within *width*.
+    The whole group is drawn on one page, inside an outline in the cue's colour.
     """
     cue_cfg = layout.get('cues', {})
     font_name, font_style = _split_font(cue_cfg.get('name-font', 'Helvetica'))
@@ -504,44 +528,47 @@ def _draw_preview_chips(
     right = x + width
 
     pdf.set_font(font_name, font_style, size)
-    top_y = pdf.get_y() + frame + gap
-    row_y = top_y
-    cx = x
-
-    pdf.set_text_color(*_cue_color(layout, layer, layer_colors))
     label_w = pdf.get_string_width(label) + 1
-    pdf.set_xy(cx, row_y)
-    pdf.cell(label_w, box_h, label)
-    cx += label_w + gap
-    used_right = cx
 
+    # Lay out every box first, so the group's height is known before anything is drawn.
+    placed = []  # (left, row, width, text, RGB border colour)
+    row = 0
+    cx = x + label_w + gap
     for chip in chips:
         text = _latin1(chip['text'])
         chip_w = pdf.get_string_width(text) + 2 * pad
-        if cx > x + label_w and cx + chip_w > right:  # wrap to a new row
-            row_y += box_h + gap
+        if cx > x + label_w + gap and cx + chip_w > right:  # wrap to a new row
+            row += 1
             cx = x
-        pdf.set_draw_color(*_colour_rgb(chip.get('color')))
-        pdf.set_line_width(0.3)
-        pdf.rect(cx, row_y, chip_w, box_h, style='D')
-        pdf.set_text_color(0, 0, 0)
-        pdf.set_xy(cx + pad, row_y)
-        pdf.cell(chip_w - 2 * pad, box_h, text)
+        placed.append((cx, row, chip_w, text, _colour_rgb(chip.get('color'))))
         cx += chip_w + gap
-        used_right = max(used_right, cx - gap)
+    rows = row + 1
+    group_h = 2 * frame + rows * box_h + (rows - 1) * gap
+
+    if pdf.get_y() + gap + group_h > pdf.page_break_trigger:
+        pdf.add_page()
+    outline_top = pdf.get_y() + gap
+    row0 = outline_top + frame
+
+    pdf.set_text_color(*_cue_color(layout, layer, layer_colors))
+    pdf.set_xy(x, row0)
+    pdf.cell(label_w, box_h, label)
+
+    for left, row_idx, chip_w, text, border in placed:
+        row_y = row0 + row_idx * (box_h + gap)
+        pdf.set_draw_color(*border)
+        pdf.set_line_width(0.3)
+        pdf.rect(left, row_y, chip_w, box_h, style='D')
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_xy(left + pad, row_y)
+        pdf.cell(chip_w - 2 * pad, box_h, text)
 
     # Outline around the whole group (label and chips) in the cue's layer colour.
-    bottom_y = row_y + box_h
+    used_right = max([x + label_w] + [left + chip_w for left, _, chip_w, _, _ in placed])
     pdf.set_draw_color(*_cue_color(layout, layer, layer_colors))
     pdf.set_line_width(0.4)
-    pdf.rect(
-        x,
-        top_y - frame,
-        min(used_right - x + frame, width),
-        bottom_y - top_y + 2 * frame,
-        style='D',
-    )
-    pdf.set_xy(x, bottom_y + frame + gap)
+    pdf.rect(x, outline_top, min(used_right - x + frame, width), group_h, style='D')
+    pdf.set_xy(x, outline_top + group_h + gap)
 
 
 def _draw_cue_annotations(
@@ -631,7 +658,8 @@ def _draw_cue_annotations(
         box_w = name_col_w + label_w + 2 * pad
         box_h = content_h + 2 * pad
         box_x = x - box_w
-        box_y = y
+        # Keep the box on this page; a box that would run off the bottom moves up.
+        box_y = min(y, pdf.page_break_trigger - box_h)
 
         # Draw background with opacity (blend bg_rgb toward white).
         blended = (
@@ -671,8 +699,6 @@ def _draw_cue_annotations(
 
         y = box_y + box_h + space
 
-        if y > y_bottom:
-            break
 
     # Restore defaults.
     pdf.set_text_color(0, 0, 0)
