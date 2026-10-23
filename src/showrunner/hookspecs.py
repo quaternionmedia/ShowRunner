@@ -157,7 +157,8 @@ class ShowRunnerSpec:
         ``action`` is 'create', 'update' or 'delete'. ``cue`` is the cue's dict (id,
         number, point, name, layer, cue_type, cue_list_id, script_line, script_char):
         its new state, or for 'delete' the state it had before removal. ``before`` is
-        the state before an update, otherwise None. Undo and drops call it too.
+        the state before an update, otherwise None. Undo, drops and renumbering call
+        it too (renumbering sends one 'update' per cue whose number changed).
         Return a message if the plugin could not do what was asked; the viewer shows it.
         """
 
