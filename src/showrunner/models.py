@@ -101,6 +101,22 @@ class Layer(SQLModel, table=True):
     show: Optional[Show] = Relationship(back_populates='layers')
 
 
+class CueGroup(SQLModel, table=True):
+    """A named box around cues in a cue list; groups nest via ``parent_id``.
+
+    ``external_id`` is the id in a connected system (e.g. a QLab uniqueID), set by plugins.
+    """
+
+    __tablename__ = 'cue_groups'
+
+    id: int | None = Field(default=None, primary_key=True)
+    cue_list_id: int = Field(foreign_key='cue_lists.id')
+    name: str = ''
+    color: str = 'grey'  # Quasar colour name
+    parent_id: int | None = Field(default=None, foreign_key='cue_groups.id')
+    external_id: str | None = None
+
+
 class Cue(SQLModel, table=True):
     """A single cue within a cue list.
 
@@ -124,6 +140,7 @@ class Cue(SQLModel, table=True):
     script_char: int | None = (
         None  # character offset within the line (None = start of line)
     )
+    group_id: int | None = Field(default=None, foreign_key='cue_groups.id')  # innermost group
     created_at: datetime = Field(default_factory=_utcnow)
 
     cue_list: Optional[CueList] = Relationship(back_populates='cues')

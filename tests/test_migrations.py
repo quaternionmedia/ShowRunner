@@ -53,3 +53,41 @@ def test_upgrade_on_empty_db_creates_schema(tmp_path):
     command.upgrade(db.alembic_config(), 'head')
     assert _rev(db) == _head(db)
     db.create_schema()
+
+
+def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
+    path = tmp_path / 'groups.db'
+    con = sqlite3.connect(path)  # the schema as it was before cue groups
+    con.executescript(
+        'create table shows (id integer primary key, name varchar not null, venue varchar,'
+        ' created_at datetime not null, updated_at datetime not null);'
+        'create table cue_lists (id integer primary key, show_id integer not null,'
+        ' name varchar not null, description varchar, created_at datetime not null);'
+        'create table cues (id integer primary key, cue_list_id integer not null, number varchar,'
+        ' point integer not null default 0, name varchar, layer varchar, cue_type varchar,'
+        ' notes varchar, color varchar, sequence integer not null default 0, script_line integer,'
+        ' script_char integer, created_at datetime not null);'
+        "insert into shows values (1, 'Hamlet', null, '2026-01-01', '2026-01-01');"
+        "insert into cue_lists values (1, 1, 'Main', null, '2026-01-01');"
+        "insert into cues (id, cue_list_id, number, name, layer, created_at)"
+        " values (1, 1, '5', 'a', 'Lights', '2026-01-01');"
+    )
+    con.commit()
+    con.close()
+
+    db = ShowDatabase(path)
+    cfg = db.alembic_config()
+    command.stamp(cfg, 'b3f1d0a7c921')
+    command.upgrade(cfg, 'head')
+    assert _rev(db) == _head(db)
+    con = sqlite3.connect(path)
+    assert 'group_id' in {r[1] for r in con.execute('pragma table_info(cues)')}
+    assert con.execute('select name, group_id from cues where id = 1').fetchall() == [('a', None)]
+    con.close()
+
+    command.downgrade(cfg, '-1')
+    con = sqlite3.connect(path)
+    assert 'group_id' not in {r[1] for r in con.execute('pragma table_info(cues)')}
+    assert con.execute("select name from sqlite_master where name = 'cue_groups'").fetchall() == []
+    assert con.execute('select name from cues').fetchall() == [('a',)]
+    con.close()
