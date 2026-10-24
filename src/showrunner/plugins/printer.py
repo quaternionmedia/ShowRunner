@@ -29,6 +29,7 @@ from sqlmodel import select
 import showrunner
 from showrunner import ui as _sr_ui
 from showrunner.layers import COLOR_RGB, cue_number_label, get_layers, hook_results
+from showrunner.groups import group_depths, group_tree
 from showrunner.models import CUE_ORDER, Cue, CueList, Script
 from showrunner.plugins.db import get_db
 
@@ -167,6 +168,15 @@ def _latin1(text: str) -> str:
     return text.translate(_PDF_PUNCT).encode('latin-1', 'replace').decode('latin-1')
 
 
+# Group outline geometry, in mm
+GROUP_LINE = 0.3
+GROUP_PAD = 1.5  # outline distance from the text column, for the outermost group
+GROUP_STEP = 1.2  # extra distance per nesting level
+GROUP_TOP_GAP = 0.4
+GROUP_LABEL_SIZE = 7  # pt
+GROUP_LABEL_H = 3.2  # room reserved above a group's top edge for its name
+
+
 @dataclass(frozen=True)
 class CuePrintOptions:
     """Which cue details to print: badges and names in the margin, notes under the name,
@@ -224,8 +234,12 @@ def generate_pdf(
     layout: dict[str, Any],
     layer_colors: dict[str, str],
     options: CuePrintOptions | None = None,
+    groups: list[dict] | None = None,
 ) -> bytes:
-    """Render *script* with *cues* to PDF bytes using *layout* settings."""
+    """Render *script* with *cues* to PDF bytes using *layout* settings.
+
+    *groups* are ``group_tree`` dicts; each one is outlined on the page segments it spans.
+    """
 
     options = options or CuePrintOptions()
     previews = _collect_previews(cues) if options.previews else {}
@@ -302,6 +316,39 @@ def generate_pdf(
 
     usable_width = pw - ml - mr
 
+    # Group outlines. A group is one box per page: its sides follow each element it spans,
+    # its top edge and name sit where it starts (again on each continued page), and its
+    # bottom edge is drawn when it ends. Outer groups are drawn wider than the groups inside.
+    group_depth = group_depths(groups or [])
+    deepest = max(group_depth.values(), default=0)
+    boxes_open: dict[int, dict] = {}  # group id -> {'page', 'left', 'right', 'bottom', 'rgb'}
+
+    def _groups_on(lines: list[int]) -> list[dict]:
+        ids = {c.id for ln in lines for c in cues_by_line.get(ln, [])}
+        ordered = sorted(groups or [], key=lambda g: group_depth[g['id']])
+        return [g for g in ordered if ids & set(g['member_ids'])]
+
+    def _edge(g: dict, left: float, right: float, y: float, label_x: float) -> float:
+        """Draw a group's top edge at *y*, its name above it at *label_x*; returns the next label x."""
+        rgb = _colour_rgb(g.get('color'))
+        pdf.set_draw_color(*rgb)
+        pdf.set_line_width(GROUP_LINE)
+        pdf.line(left, y, right, y)
+        name = _latin1(g.get('name') or 'Group')
+        pdf.set_font('Helvetica', '', GROUP_LABEL_SIZE)
+        pdf.set_text_color(*rgb)
+        pdf.text(label_x, y - 0.8, name)  # text() leaves the cursor where it is
+        return label_x + pdf.get_string_width(name) + 2
+
+    def _close_box(gid: int) -> None:
+        box = boxes_open.pop(gid)
+        here_page = pdf.page
+        pdf.page = box['page']
+        pdf.set_draw_color(*box['rgb'])
+        pdf.set_line_width(GROUP_LINE)
+        pdf.line(box['left'], box['bottom'], box['right'], box['bottom'])
+        pdf.page = here_page
+
     for idx, elem in enumerate(elements):
         if elem.type in (
             ElementType.BONEYARD,
@@ -344,6 +391,30 @@ def generate_pdf(
         cell_w = usable_width - elem_ml - elem_mr
         if cell_w < 10:
             cell_w = 10
+
+        def _box_x(gid: int) -> tuple[float, float]:
+            nest = (deepest - group_depth[gid]) * GROUP_STEP
+            return cell_x - GROUP_PAD - nest, cell_x + cell_w + GROUP_PAD + nest
+
+        here = _groups_on(elem_lines[idx] if idx < len(elem_lines) else [])
+        here_ids = {g['id'] for g in here}
+        ended = [
+            gid for gid, b in boxes_open.items() if gid not in here_ids or b['page'] != pdf.page
+        ]
+        for gid in ended:
+            _close_box(gid)
+        starting = [g for g in here if g['id'] not in boxes_open]
+        if starting:
+            if pdf.get_y() + GROUP_LABEL_H > pdf.page_break_trigger:
+                _add_page()
+            pdf.set_y(pdf.get_y() + GROUP_LABEL_H)  # room for the name above the top edge
+        seg_page, seg_top = pdf.page, pdf.get_y() - GROUP_TOP_GAP
+        label_x = cell_x
+        for g in starting:
+            label_x = _edge(g, *_box_x(g['id']), seg_top, label_x)
+        if starting:
+            pdf.set_font(font_name, font_style, font_size)
+            pdf.set_text_color(0, 0, 0)
 
         page_before = pdf.page
         y_before = pdf.get_y()
@@ -392,10 +463,39 @@ def generate_pdf(
         pdf.set_auto_page_break(auto=True, margin=mb)
         pdf.set_y(saved_y)
 
+        # Sides for this element on each page it covers. A box stays open after the element,
+        # so its bottom edge is drawn only when the group ends (or moves to another page).
+        y_end = y_after + GROUP_TOP_GAP
+        last_page = pdf.page
+        for g in here:
+            left, right = _box_x(g['id'])
+            rgb = _colour_rgb(g.get('color'))
+            pdf.set_draw_color(*rgb)
+            pdf.set_line_width(GROUP_LINE)
+            for page_no in range(seg_page, last_page + 1):
+                pdf.page = page_no
+                top = seg_top if page_no == seg_page else pdf.t_margin - GROUP_TOP_GAP
+                bottom = y_end if page_no == last_page else pdf.page_break_trigger
+                pdf.line(left, top, left, bottom)
+                pdf.line(right, top, right, bottom)
+                if page_no > seg_page:  # the name repeats where the group continues
+                    pdf.set_draw_color(*rgb)
+                    _edge(g, left, right, top, cell_x)
+            pdf.page = last_page
+            boxes_open[g['id']] = {
+                'page': last_page, 'left': left, 'right': right, 'bottom': y_end, 'rgb': rgb,
+            }
+        if here and last_page != seg_page:
+            pdf.set_font(font_name, font_style, font_size)
+            pdf.set_text_color(0, 0, 0)
+
         # Space after
         space_after = style.get('space-after', 0)
         if space_after:
             pdf.set_y(pdf.get_y() + space_after * 0.352778)
+
+    for gid in list(boxes_open):
+        _close_box(gid)
 
     # Footer on every page (drawn after content).
     if footer_cfg.get('enabled', False):
@@ -764,6 +864,7 @@ async def export_script_pdf(
             .order_by(*CUE_ORDER)
         ).all()
         layer_colors = {r['name']: r['color'] for r in get_layers(s, script.show_id)}
+        groups = group_tree(s, cue_list_id)
 
         # Detach data before closing the session.
         script_title = script.title or 'Script'
@@ -795,7 +896,7 @@ async def export_script_pdf(
 
     layout = _load_layout(layout_path)
     options = CuePrintOptions(markers=markers, names=names, notes=notes, previews=previews)
-    pdf_bytes = generate_pdf(script_obj, cue_list, layout, layer_colors, options)
+    pdf_bytes = generate_pdf(script_obj, cue_list, layout, layer_colors, options, groups)
 
     timestamp = datetime.now().strftime('%Y-%m-%d_%H%M')
     filename = f'{script_title} {timestamp}.pdf'

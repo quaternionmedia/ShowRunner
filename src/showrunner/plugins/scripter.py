@@ -4,6 +4,7 @@ Provides a NiceGUI page at ``/script`` for viewing scripts and placing cues
 onto specific lines within the script text.
 """
 
+import json
 import re
 from collections import deque
 from html import escape as _escape
@@ -26,7 +27,16 @@ from showrunner.layers import (
     is_color,
     update_layer,
 )
-from showrunner.models import Cue, CueList, Layer, Script
+from showrunner.groups import (
+    container_for,
+    create_group,
+    delete_group,
+    group_depths,
+    group_tree,
+    set_members,
+    update_group,
+)
+from showrunner.models import Cue, CueGroup, CueList, Layer, Script
 from showrunner.plugins.db import get_db
 from showrunner.renumber import renumber_cues
 from showrunner.scriptformat import DEFAULT_LINE_HEIGHT, block_css, classify_lines, load_styles
@@ -37,6 +47,82 @@ ALL_LISTS = 0  # cue-list filter value meaning "every cue list in the show"
 PAGE_SIZE = 100
 PAGE_BREAK_RE = re.compile(r'\[\[Page\s+(.+?)\]\]')
 DEFAULT_UNDO_LEVELS = 50
+GROUP_COLOURS = ['grey', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'teal', 'cyan', 'blue', 'indigo', 'purple', 'pink']
+
+# Draws group boxes around the chips of each group (window.srDrawGroups) and the rubber-band
+# selection in group mode (window.srGroupMode). Chips carry data-cue-id; the host is #sr-script-host.
+_GROUP_JS = """
+<script>
+window.srDrawGroups = (groups, tries = 0) => {
+  const ov = document.getElementById('sr-group-overlay');
+  if (!ov) { if (tries < 20) setTimeout(() => window.srDrawGroups(groups, tries + 1), 50); return; }
+  window.srLast = groups;
+  ov.innerHTML = '';
+  const host = ov.parentElement, base = ov.getBoundingClientRect();
+  for (const g of groups) {
+    // Box spans the full text width of each member line, and the chips' top edge
+    const chips = g.cue_ids.map(id => host.querySelector(`[data-cue-id="${id}"]`)).filter(Boolean);
+    const lines = [...new Set(chips.map(el => el.closest('[data-line]')).filter(Boolean))];
+    if (!lines.length) continue;
+    const rs = lines.map(el => el.getBoundingClientRect());
+    const tops = chips.map(el => el.getBoundingClientRect().top);
+    const pad = 4 + g.nest * 4;
+    const l = Math.min(...rs.map(r => r.left)) - base.left - pad;
+    const t = Math.min(...rs.map(r => r.top), ...tops) - base.top - pad - 10;
+    const rt = Math.max(...rs.map(r => r.right)) - base.left + pad;
+    const b = Math.max(...rs.map(r => r.bottom)) - base.top + pad;
+    const box = document.createElement('div');
+    box.className = `text-${g.color}`;
+    box.style.cssText = `position:absolute;left:${l}px;top:${t}px;width:${rt - l}px;height:${b - t}px;border:2px solid currentColor;border-radius:6px;`;
+    const label = document.createElement('div');
+    label.textContent = g.name;
+    label.style.cssText = 'position:absolute;top:-0.9em;left:8px;padding:0 4px;background:#121212;font-size:0.7rem;white-space:nowrap;pointer-events:auto;cursor:pointer;';
+    label.addEventListener('click', () => ov.dispatchEvent(new CustomEvent('srgroup', {detail: g.id})));
+    box.appendChild(label);
+    ov.appendChild(box);
+  }
+  if (!window.srResizeHooked) {
+    window.srResizeHooked = true;
+    window.addEventListener('resize', () => window.srLast && window.srDrawGroups(window.srLast));
+  }
+};
+window.srGroupMode = (on, hostId) => {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  host._srGroupOn = on;
+  host.style.cursor = on ? 'crosshair' : '';
+  if (host._srHooked) return;
+  host._srHooked = true;
+  host.addEventListener('mousedown', (e) => {
+    if (!host._srGroupOn || e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, y0 = e.clientY;
+    const sel = document.createElement('div');
+    sel.style.cssText = 'position:fixed;border:1px dashed #fff;background:rgba(255,255,255,0.08);pointer-events:none;z-index:9999;';
+    document.body.appendChild(sel);
+    const move = (ev) => {
+      sel.style.left = Math.min(x0, ev.clientX) + 'px'; sel.style.top = Math.min(y0, ev.clientY) + 'px';
+      sel.style.width = Math.abs(ev.clientX - x0) + 'px'; sel.style.height = Math.abs(ev.clientY - y0) + 'px';
+    };
+    const up = (ev) => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      sel.remove();
+      const L = Math.min(x0, ev.clientX), R = Math.max(x0, ev.clientX);
+      const T = Math.min(y0, ev.clientY), B = Math.max(y0, ev.clientY);
+      if (R - L < 4 && B - T < 4) return;
+      const ids = [...host.querySelectorAll('[data-cue-id]')].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.right >= L && r.left <= R && r.bottom >= T && r.top <= B;
+      }).map((el) => Number(el.dataset.cueId));
+      if (ids.length) host.dispatchEvent(new CustomEvent('srselect', {detail: [...new Set(ids)]}));
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+};
+</script>
+"""
 
 
 def _parse_pages(lines: list[str]) -> list[dict]:
@@ -167,9 +253,43 @@ def _load_cues(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
                 'layer': c.layer,
                 'script_line': c.script_line,
                 'script_char': c.script_char,
+                'group_id': c.group_id,
             }
             for c in cues
         ]
+
+def _load_groups(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
+    """Groups of the cue list in scope (every list in the show when *all_lists*), from group_tree."""
+    if cue_list_id is None:
+        return []
+    with get_db().session() as s:
+        cl = s.get(CueList, cue_list_id)
+        if cl is None:
+            return []
+        ids = (
+            s.exec(select(CueList.id).where(CueList.show_id == cl.show_id)).all()
+            if all_lists
+            else [cue_list_id]
+        )
+        return [g for lid in ids for g in group_tree(s, lid)]
+
+
+def _group_snapshot(group_id: int) -> dict | None:
+    """A group's state as plugin hooks see it: its own cue ids (not its descendants')."""
+    with get_db().session() as s:
+        g = s.get(CueGroup, group_id)
+        if g is None:
+            return None
+        cue_ids = list(s.exec(select(Cue.id).where(Cue.group_id == g.id)))
+        return {
+            'id': g.id,
+            'name': g.name,
+            'color': g.color,
+            'parent_id': g.parent_id,
+            'external_id': g.external_id,
+            'cue_ids': cue_ids,
+        }
+
 
 def _cue_state(cue: Cue) -> dict:
     """The restorable fields of a cue, as the undo stack and plugin hooks see them."""
@@ -217,6 +337,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
     def script_page():
         ui.dark_mode(True)
         header()
+        ui.add_body_html(_GROUP_JS)
 
         # ---- state ----------------------------------------------------------
         selected_show_id: dict = {'v': _current_show_id()}
@@ -244,6 +365,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
         # toggle for click-to-add-cue mode
         cue_mode: dict = {'v': False}
+        group_mode: dict = {'v': False}  # rubber-band selection draws a new group
 
         # refs to dynamic containers
         script_select_ref: dict = {'el': None}
@@ -331,6 +453,108 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 if msg:
                     ui.notify(f'TheatreMix not updated: {msg}', type='warning')
 
+        def _notify_group(action: str, group: dict | None, before: dict | None = None) -> None:
+            """Tell plugins a group changed (see showrunner_group_changed)."""
+            if group is None:
+                return
+            for msg in hook_results(_sr_ui._pm, 'showrunner_group_changed', action=action, group=group, before=before):
+                if msg:
+                    ui.notify(f'Plugin did not update group: {msg}', type='warning')
+
+        def _single_list(cue_ids: list[int]) -> int | None:
+            """The cue list all *cue_ids* belong to, or None (with a notice) when they span lists."""
+            with get_db().session() as s:
+                lists = set(s.exec(select(Cue.cue_list_id).where(Cue.id.in_(cue_ids))))
+            if len(lists) != 1:
+                ui.notify('Select cues from one cue list.', type='warning')
+                return None
+            return lists.pop()
+
+        def _create_group(cl_id: int, cue_ids: list[int], name: str, color: str) -> None:
+            """New group around *cue_ids*, nested in the smallest existing group that already holds them all."""
+            with get_db().session() as s:
+                parent = container_for(s, cl_id, cue_ids)
+                gid = create_group(s, cl_id, cue_ids, name=name, color=color, parent_id=parent).id
+                s.commit()
+            _notify_group('create', _group_snapshot(gid))
+            refresh_all()
+
+        def _update_group(group_id: int, name: str, color: str) -> None:
+            before = _group_snapshot(group_id)
+            with get_db().session() as s:
+                update_group(s, group_id, name=name, color=color)
+                s.commit()
+            _notify_group('update', _group_snapshot(group_id), before)
+            refresh_all()
+
+        def _delete_group(group_id: int) -> None:
+            """Remove a group. Its cues stay in the list, in the enclosing group if there is one."""
+            before = _group_snapshot(group_id)
+            with get_db().session() as s:
+                delete_group(s, group_id)
+                s.commit()
+            _notify_group('delete', before)
+            refresh_all()
+
+        def _remove_from_group(cue_id: int) -> None:
+            with get_db().session() as s:
+                cue = s.get(Cue, cue_id)
+                gid = cue.group_id if cue else None
+            before = _group_snapshot(gid) if gid is not None else None
+            if before is None:
+                return
+            with get_db().session() as s:
+                set_members(s, gid, [c for c in before['cue_ids'] if c != cue_id])
+                s.commit()
+            _notify_group('members', _group_snapshot(gid), before)
+            refresh_all()
+
+        def open_group_dialog(group: dict | None, cue_ids: list[int] | None = None, cl_id: int | None = None) -> None:
+            """Name and colour for a new group (*cue_ids* and *cl_id*) or an existing one (*group*)."""
+            dlg = ui.dialog()
+            with dlg, ui.card().classes('p-3 gap-2').style('min-width: 300px'):
+                ui.label('Edit group' if group else 'New group').classes('text-subtitle2 font-bold')
+                name_in = ui.input(label='Name', value=(group or {}).get('name', '')).classes('w-full')
+                colour_in = ui.select(
+                    GROUP_COLOURS, value=(group or {}).get('color', 'grey'), label='Colour'
+                ).classes('w-full')
+
+                def _save(_):
+                    name, colour = name_in.value.strip(), colour_in.value
+                    if group:
+                        _update_group(group['id'], name, colour)
+                    else:
+                        _create_group(cl_id, cue_ids, name, colour)
+                    dlg.close()
+
+                with ui.row().classes('w-full justify-between items-center mt-2'):
+                    if group:
+                        ui.button('Delete group', color='red', on_click=lambda _: (_delete_group(group['id']), dlg.close())).props('flat dense').tooltip('Cues stay in the list')
+                    else:
+                        ui.label('')
+                    with ui.row():
+                        ui.button('Cancel', on_click=dlg.close).props('flat')
+                        ui.button('Save' if group else 'Create', on_click=_save)
+            dlg.open()
+
+        def _on_group_select(e) -> None:
+            ids = [int(i) for i in (e.args or {}).get('ids', [])]
+            if not ids:
+                return
+            cl_id = _single_list(ids)
+            if cl_id is not None:
+                open_group_dialog(None, ids, cl_id)
+
+        def _open_group_by_id(group_id) -> None:
+            snap = _group_snapshot(int(group_id))
+            if snap is not None:
+                open_group_dialog(snap)
+
+        def toggle_group_mode() -> None:
+            group_mode['v'] = not group_mode['v']
+            ui.run_javascript(f'window.srGroupMode({json.dumps(group_mode["v"])}, "sr-script-host")')
+            render_toolbar()
+
         def _update_cue(cue_id: int, record_undo: bool = True, **fields) -> None:
             """Update one or more fields on a cue."""
             old = _snapshot_cue(cue_id)
@@ -408,6 +632,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 'inline-flex cursor-grab select-none mr-1'
             )
             wrapper._props['draggable'] = 'true'
+            wrapper._props['data-cue-id'] = str(cue_id)
             wrapper.on(
                 'dragstart',
                 js_handler=f'(e) => {{ e.dataTransfer.setData("text/plain", "{cue_id}"); e.dataTransfer.effectAllowed = "move"; }}',
@@ -441,6 +666,13 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         value=c['layer'],
                         label='Layer',
                     ).classes('w-full')
+
+                    if c.get('group_id') is not None:
+                        ui.button(
+                            'Remove from group',
+                            icon='link_off',
+                            on_click=lambda _, cid=c['id']: (_remove_from_group(cid), menu.close(), refresh_all()),
+                        ).props('flat dense')
 
                     with ui.row().classes('w-full justify-between items-center mt-2'):
                         ui.button(
@@ -546,6 +778,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             show_id = selected_show_id['v']
             cl_id, all_lists = _cue_scope(show_id)
             cues = _load_cues(cl_id, all_lists)
+            groups = _load_groups(cl_id, all_lists)
 
             # Index positioned cues by (line, char)
             cues_by_line: dict[int, list[dict]] = {}
@@ -698,6 +931,31 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                             if c['id'] in previews:
                                 render_preview(previews[c['id']], c)
 
+                # Group boxes: JS measures the chips of each group's cues on this page
+                on_page = {c['id'] for line_idx, _ in page_lines for c in cues_by_line.get(line_idx + 1, [])}
+                depths = group_depths(groups)
+                deepest = max(depths.values(), default=0)
+                boxes = [
+                    {
+                        'id': g['id'],
+                        'name': g['name'] or 'Group',
+                        'color': g['color'] if is_color(g['color']) else 'grey',
+                        'nest': deepest - depths[g['id']],  # outer boxes sit outside inner ones
+                        'cue_ids': [i for i in g['member_ids'] if i in on_page],
+                    }
+                    for g in sorted(groups, key=lambda g: depths[g['id']])
+                ]
+                boxes = [b for b in boxes if b['cue_ids']]
+                overlay = ui.element('div').props('id=sr-group-overlay').style(
+                    'position: absolute; inset: 0; pointer-events: none;'
+                )
+                overlay.on(
+                    'srgroup',
+                    lambda e: _open_group_by_id(e.args['id']),
+                    js_handler='(e) => emit({id: e.detail})',
+                )
+                ui.timer(0.05, lambda: ui.run_javascript(f'window.srDrawGroups({json.dumps(boxes)})'), once=True)
+
             render_pagination()
 
         def _render_line_with_cues(
@@ -754,7 +1012,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             with ui.element('div').style(
                 f'position: relative; flex: 1; min-width: 0; line-height: {line_height}; '
                 f'font-family: monospace; font-size: 0.875rem; {block_css(styles[kind])}'
-            ):
+            ) as line_el:
+                line_el._props['data-line'] = str(line_num)  # group boxes measure this
                 cursor = 0
                 for pos in sorted(by_char):
                     if pos > cursor:
@@ -1325,6 +1584,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 )
                 ui.separator().props('vertical')
                 ui.button(
+                    'Group',
+                    icon='crop_free',
+                    on_click=toggle_group_mode,
+                    color='white' if group_mode['v'] else None,
+                ).props('dense unelevated' if group_mode['v'] else 'dense outline').tooltip(
+                    'Drag a box over cues to group them' if not group_mode['v'] else 'Group mode on: drag a box over cues'
+                )
+                ui.button(
                     'Cue Details',
                     icon='visibility' if show_details['v'] else 'visibility_off',
                     on_click=toggle_details,
@@ -1480,7 +1747,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     )
                     with ui.scroll_area().classes('w-full h-[calc(100vh-180px)]') as scroll:
                         scroll_ref['el'] = scroll
-                        script_content_ref['el'] = ui.column().classes('w-full p-4')
+                        script_content_ref['el'] = (
+                            ui.column().classes('w-full p-4').props('id=sr-script-host').style('position: relative;')
+                        )
+                        script_content_ref['el'].on(
+                            'srselect', _on_group_select, js_handler='(e) => emit({ids: e.detail})'
+                        )
                     pagination_bottom_ref['el'] = ui.row().classes(
                         'w-full justify-center p-2 border-t border-gray-700'
                     )
