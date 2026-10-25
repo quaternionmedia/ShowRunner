@@ -111,9 +111,8 @@ def test_get_previews_drops_a_plugin_s_malformed_answer_and_keeps_the_others(mon
 
 def test_load_groups_and_depths_for_nested_groups(db, monkeypatch):
     import showrunner.plugins.db as db_module
-    from showrunner.groups import create_group
+    from showrunner.groups import create_group, group_depths
     from showrunner.models import Cue, CueList, Show
-    from showrunner.groups import group_depths
     from showrunner.plugins.scripter import _load_cues, _load_groups
 
     monkeypatch.setattr(db_module, '_db', db)
@@ -136,3 +135,9 @@ def test_load_groups_and_depths_for_nested_groups(db, monkeypatch):
     assert depths[by_name['inner']['id']] == 1
     assert sorted(by_name['outer']['member_ids']) == [1, 2]
     assert _load_cues(1)[0]['group_id'] is not None
+
+
+def test_group_colour_falls_back_to_grey_for_unknown_names():
+    from showrunner.plugins.scripter import _group_colour
+    assert _group_colour('none') == 'grey' and _group_colour(None) == 'grey'
+    assert _group_colour('orange') == 'orange'
