@@ -4,9 +4,9 @@ Cues are grouped by their main number, so ``5``, ``5.1`` and ``5.2`` move togeth
 and keep their points. Distinct main numbers in the range are renumbered in order:
 the lowest becomes ``start``, the next ``start + increment``, and so on.
 
-With ``include_unnumbered``, unnumbered cues whose script position falls within the
-range's span are numbered too. Each one goes after the last unit above it in the
-script, and takes its own main number.
+With ``include_unnumbered``, every unnumbered cue on the layer with a script position is
+numbered too. Each one goes after the last unit above it in the script, and takes its
+own main number.
 
 Groups on the layer are numbered the same way, as points-free units. A group's script
 position is that of its earliest own cue, so a group with no own cues has none.
@@ -60,10 +60,11 @@ def renumber_cues(
     number itself, so the range keeps its first number). *increment* is the step
     between consecutive main numbers and must be at least 1.
 
-    With *include_unnumbered*, unnumbered cues on the layer whose script position lies
-    between the first and last positioned cue in range are numbered as well, in script
-    order. Unnumbered cues without a script position are left alone. If the range has
-    no positioned cues, there is no span and no unnumbered cues are included.
+    With *include_unnumbered*, every unnumbered cue on the layer with a script position is
+    numbered as well, in script order, each after the last unit above it in the script.
+    Unnumbered cues without a script position are left alone. If the range has no
+    positioned cues, no unnumbered cues are included; if it has no numbered cues at all,
+    the layer's positioned cues are numbered from *start* (default: the range's first number).
 
     Flushes but does not commit; the caller commits. Raises ``ValueError`` before
     changing anything if the new numbers would collide with a cue on the same
@@ -85,7 +86,7 @@ def renumber_cues(
     ).all()
     items = [*cues, *groups]
     numbered = [c for c in items if (n := _as_int(c.number)) is not None and low <= n <= high]
-    if not numbered:
+    if not numbered and not include_unnumbered:
         return []
 
     # Only needed for groups: where each group's earliest own cue sits in the script
@@ -103,15 +104,10 @@ def renumber_cues(
     units = list(by_number.values())  # one unit per main number, in number order
 
     if include_unnumbered:
-        positions = [p for p in (_position(i, group_pos) for i in numbered) if p is not None]
-        if positions:
-            span = (min(positions), max(positions))
-            loose = [
-                c
-                for c in items
-                if not c.number and (p := _position(c, group_pos)) is not None
-                and span[0] <= p <= span[1]
-            ]
+        # Needs a positioned numbered cue in range to anchor on; with none in range (a fresh
+        # list) it anchors on the layer's positioned cues instead
+        if any(_position(i, group_pos) is not None for i in (numbered or items)):
+            loose = [c for c in items if not c.number and _position(c, group_pos) is not None]
             for item in sorted(loose, key=lambda c: _position(c, group_pos)):
                 # After the last unit that starts at or before this item in the script.
                 at = 0
@@ -121,7 +117,10 @@ def renumber_cues(
                         at = i + 1
                 units.insert(at, [item])
 
-    first = _as_int(numbered[0].number) if start is None else start
+    if start is not None:
+        first = start
+    else:
+        first = _as_int(numbered[0].number) if numbered else low
     assigned = [
         (item, str(first + i * increment)) for i, unit in enumerate(units) for item in unit
     ]

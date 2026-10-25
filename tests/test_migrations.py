@@ -71,6 +71,13 @@ def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
         "insert into cue_lists values (1, 1, 'Main', null, '2026-01-01');"
         "insert into cues (id, cue_list_id, number, name, layer, created_at)"
         " values (1, 1, '5', 'a', 'Lights', '2026-01-01');"
+        'create table layers (id integer primary key, show_id integer not null,'
+        ' name varchar not null, color varchar not null, type varchar not null,'
+        ' sequence integer not null, unique (show_id, name));'
+        "insert into layers (id, show_id, name, color, type, sequence) values"
+        " (1, 1, 'Lights', 'orange', 'lights', 0), (2, 1, 'Sound', 'blue', 'sound', 1),"
+        " (3, 1, 'Q', 'grey', 'generic', 2), (4, 1, 'Lights 2', 'orange', 'lights', 3),"
+        " (5, 1, 'Sound FX 2', 'blue', 'sound', 4);"
     )
     con.commit()
     con.close()
@@ -85,13 +92,25 @@ def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
     assert con.execute('select name, group_id from cues where id = 1').fetchall() == [('a', None)]
     con.close()
 
-    command.downgrade(cfg, '-1')  # the cue QLab-link columns go first
+    # backfilled to the prefixes QLab already used; clashes get a fallback
     con = sqlite3.connect(path)
-    assert not {'external_id', 'external_number'} & {r[1] for r in con.execute('pragma table_info(cues)')}
+    assert con.execute('select name, prefix from layers order by sequence').fetchall() == [
+        ('Lights', ''), ('Sound', 's'), ('Q', 'Q'), ('Lights 2', 'Lights'), ('Sound FX 2', 'SoundFX')]
+    con.close()
+
+    command.downgrade(cfg, '-1')  # the layer prefix goes first
+    con = sqlite3.connect(path)
+    assert 'prefix' not in {r[1] for r in con.execute('pragma table_info(layers)')}
     con.close()
 
     command.upgrade(cfg, 'head')
-    command.downgrade(cfg, '-2')  # then the group number columns
+    command.downgrade(cfg, '-2')  # then the cue QLab-link columns
+    con = sqlite3.connect(path)
+    assert not {'external_id', 'external_number'} & {r[1] for r in con.execute('pragma table_info(cues)')}
+    assert {'layer', 'number'} <= {r[1] for r in con.execute('pragma table_info(cue_groups)')}
+    con.close()
+
+    command.downgrade(cfg, '-1')  # then the group number columns
     con = sqlite3.connect(path)
     assert not {'layer', 'number'} & {r[1] for r in con.execute('pragma table_info(cue_groups)')}
     con.close()

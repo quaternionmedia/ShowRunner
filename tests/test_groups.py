@@ -8,6 +8,7 @@ from showrunner.groups import (
     create_group,
     delete_group,
     group_tree,
+    next_number,
     set_members,
     update_group,
 )
@@ -155,6 +156,54 @@ def test_group_number_is_unique_per_layer_and_renumbers_with_cues(db):
     with db.session() as s:
         changes = renumber_cues(s, cl, "Lights", (10, 10), start=20)
         s.commit()
-    assert [(isinstance(item, CueGroup), old, new) for item, old, new in changes] == [(True, "10", "20")]
+    assert [(isinstance(item, CueGroup), old, new)
+            for item, old, new in changes] == [(True, "10", "20")]
     with db.session() as s:
         assert s.get(CueGroup, g_id).number == "20"
+
+
+def test_next_number_follows_the_previous_item_of_the_layer_in_script(db):
+    with db.session() as s:
+        show = Show(name="S")
+        s.add(show)
+        s.flush()
+        cl = CueList(show_id=show.id, name="Main")
+        s.add(cl)
+        s.flush()
+        # Lights 1 @line 1, Lights 2 @line 3, Sound 9 @line 2 (other layer), new cue @line 4
+        s.add(Cue(cue_list_id=cl.id, number="1", layer="Lights", script_line=1))
+        s.add(Cue(cue_list_id=cl.id, number="9", layer="Sound", script_line=2))
+        s.add(Cue(cue_list_id=cl.id, number="2", layer="Lights", script_line=3))
+        new = Cue(cue_list_id=cl.id, number=None, layer="Lights", script_line=4)
+        s.add(new)
+        s.flush()
+        new_id = new.id
+        cl_id = cl.id
+        s.commit()
+    with db.session() as s:
+        assert next_number(s, cl_id, "Lights", [new_id]) == "3"
+        assert next_number(s, cl_id, "Sound", [new_id]) == "10"
+
+
+def test_next_number_skips_taken_numbers_and_defaults_to_one(db):
+    with db.session() as s:
+        show = Show(name="S")
+        s.add(show)
+        s.flush()
+        cl = CueList(show_id=show.id, name="Main")
+        s.add(cl)
+        s.flush()
+        first = Cue(cue_list_id=cl.id, number=None, layer="Lights", script_line=1)
+        s.add(Cue(cue_list_id=cl.id, number="2", layer="Lights", script_line=5))  # later, taken
+        s.add(first)
+        s.flush()
+        first_id = first.id
+        cl_id = cl.id
+        s.commit()
+    with db.session() as s:
+        assert next_number(s, cl_id, "Lights", [first_id]) == "1"
+        create_group(s, cl_id, [first_id], layer="Lights", number="1")
+        s.commit()
+    with db.session() as s:
+        other = s.exec(select(Cue).where(Cue.number == "2")).one()
+        assert next_number(s, cl_id, "Lights", [other.id]) == "3"  # 1 and 2 are taken

@@ -142,10 +142,10 @@ def test_unnumbered_inside_span_is_numbered_in_script_order(db):
     with db.session() as s:
         renumber_cues(s, cl, 'Lights', (5, 7), start=10, include_unnumbered=True)
         s.commit()
-    assert _numbers(db, cl, 'Lights') == [(5, '10'), (6, '11'), (8, '12'), (9, '')]
+    assert _numbers(db, cl, 'Lights') == [(5, '10'), (6, '11'), (8, '12'), (9, '13')]
 
 
-def test_unnumbered_outside_span_is_left_alone(db):
+def test_unnumbered_outside_span_is_numbered_in_script_order(db):
     cl = _setup_positioned(
         db,
         [
@@ -158,8 +158,8 @@ def test_unnumbered_outside_span_is_left_alone(db):
     with db.session() as s:
         changes = renumber_cues(s, cl, 'Lights', (5, 7), start=10, include_unnumbered=True)
         s.commit()
-    assert len(changes) == 2
-    assert _numbers(db, cl, 'Lights') == [(1, ''), (5, '10'), (8, '11'), (20, '')]
+    assert len(changes) == 4
+    assert _numbers(db, cl, 'Lights') == [(1, '10'), (5, '11'), (8, '12'), (20, '13')]
 
 
 def test_unnumbered_without_script_position_is_skipped(db):
@@ -189,3 +189,13 @@ def test_include_unnumbered_with_no_positioned_cues_in_range_adds_nothing(db):
         s.commit()
     assert len(changes) == 1
     assert _numbers(db, cl, 'Lights') == [(0, '5'), (6, '')]
+
+
+def test_include_unnumbered_numbers_a_fresh_layer_when_range_has_no_numbers(db):
+    cl = _setup_positioned(
+        db, [(None, 0, 'Lights', 1), (None, 0, 'Lights', 2), (None, 0, 'Lights', 5)]
+    )
+    with db.session() as s:
+        renumber_cues(s, cl, 'Lights', (1, 10), include_unnumbered=True)
+        s.commit()
+    assert _numbers(db, cl, 'Lights') == [(1, '1'), (2, '2'), (5, '3')]

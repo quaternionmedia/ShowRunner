@@ -14,13 +14,13 @@ from sqlmodel import Session, select
 
 from .models import Cue, CueList, Layer
 
-# Seeded into a show that has no layers yet: (name, colour, type).
+# Seeded into a show that has no layers yet: (name, colour, type, prefix).
 DEFAULT_LAYERS = [
-    ("Lights", "orange", "lights"),
-    ("Sound", "blue", "sound"),
-    ("Video", "purple", "video"),
-    ("Audio", "cyan", "audio"),
-    ("Stage", "green", "stage"),
+    ("Lights", "orange", "lights", ""),
+    ("Sound", "blue", "sound", "s"),
+    ("Video", "purple", "video", "v"),
+    ("Audio", "cyan", "audio", "a"),
+    ("Stage", "green", "stage", "Stage"),
 ]
 
 BUILTIN_LAYER_TYPES = {
@@ -48,6 +48,7 @@ COLOR_RGB = {
 }
 
 _COLOR_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_PREFIX_RE = re.compile(r"^[A-Za-z]*$")
 
 
 def is_color(value) -> bool:
@@ -120,6 +121,7 @@ def _layer_dict(layer: Layer, types: dict) -> dict:
         "color": layer.color,
         "type": layer.type,
         "sequence": layer.sequence,
+        "prefix": layer.prefix,
         # False when the type's plugin is gone; the layer is kept and treated as generic.
         "available": layer.type in types,
     }
@@ -150,13 +152,16 @@ def ensure_layers(session: Session, show_id: int, pm=None) -> None:
     """
     rows = session.exec(select(Layer).where(Layer.show_id == show_id)).all()
     names = {r.name for r in rows}
+    taken = {r.prefix.lower() for r in rows}
     seq = max((r.sequence for r in rows), default=-1) + 1
     if not rows:
-        for name, color, type_ in DEFAULT_LAYERS:
+        for name, color, type_, prefix in DEFAULT_LAYERS:
             session.add(
-                Layer(show_id=show_id, name=name, color=color, type=type_, sequence=seq)
+                Layer(show_id=show_id, name=name, color=color, type=type_, prefix=prefix,
+                      sequence=seq)
             )
             names.add(name)
+            taken.add(prefix.lower())
             seq += 1
 
     types = get_layer_types(pm)
@@ -172,18 +177,49 @@ def ensure_layers(session: Session, show_id: int, pm=None) -> None:
                     f"skipping plugin layer {entry!r}: unknown type or colour"
                 )
                 continue
+            prefix = entry["prefix"] if "prefix" in entry else default_prefix(name)
+            if prefix.lower() in taken:
+                logger.warning(f"skipping plugin layer {name!r}: prefix {prefix!r} is taken")
+                continue
             session.add(
                 Layer(
                     show_id=show_id,
                     name=name,
                     color=entry.get("color", "grey"),
                     type=entry["type"],
+                    prefix=prefix,
                     sequence=seq,
                 )
             )
             names.add(name)
+            taken.add(prefix.lower())
             seq += 1
     session.commit()
+
+
+def default_prefix(name: str) -> str:
+    """The letters of a layer name: the prefix a new layer gets unless one is given."""
+    return re.sub(r"[^A-Za-z]", "", name or "")
+
+
+def check_prefix(session: Session, show_id: int, prefix: str, layer_id: int | None = None) -> str:
+    """Return *prefix* if it is letters only and no other layer of the show uses it.
+
+    Letters only, because a digit would run into the cue number ('Q2' + 5 reads like 'Q' + 25).
+    Case-insensitive. The empty prefix is the show's one default layer, so only one layer may
+    have it. Raises ``ValueError`` otherwise.
+    """
+    if not _PREFIX_RE.match(prefix):
+        raise ValueError(f"prefix {prefix!r} must be letters only")
+    for other in session.exec(select(Layer).where(Layer.show_id == show_id)).all():
+        if other.id == layer_id or other.prefix.lower() != prefix.lower():
+            continue
+        if prefix:
+            raise ValueError(f"prefix {prefix!r} is already used by layer {other.name!r}")
+        raise ValueError(
+            f"layer {other.name!r} already has no prefix; only one layer may be the default"
+        )
+    return prefix
 
 
 def _cues_in_show(show_id: int):
@@ -193,11 +229,13 @@ def _cues_in_show(show_id: int):
 
 
 def add_layer(
-    session: Session, show_id: int, name: str, type_: str, color: str, pm=None
+    session: Session, show_id: int, name: str, type_: str, color: str, pm=None,
+    prefix: str | None = None,
 ) -> Layer:
     """Create a layer at the end of the show's order.
 
-    Raises ``ValueError`` on bad input or a duplicate name.
+    *prefix* defaults to the letters of *name*. Raises ``ValueError`` on bad input, a duplicate
+    name, or a prefix another layer already uses.
     """
     name = (name or "").strip()
     if not name:
@@ -209,12 +247,18 @@ def add_layer(
         select(Layer).where(Layer.show_id == show_id, Layer.name == name)
     ).first():
         raise ValueError(f"layer {name!r} already exists")
+    if prefix is None:
+        prefix = default_prefix(name)
+        if not prefix:
+            raise ValueError("the name has no letters: give the layer a prefix")
+    prefix = check_prefix(session, show_id, prefix.strip())
     last = session.exec(select(Layer.sequence).where(Layer.show_id == show_id)).all()
     layer = Layer(
         show_id=show_id,
         name=name,
         type=type_,
         color=color,
+        prefix=prefix,
         sequence=max(last, default=-1) + 1,
     )
     session.add(layer)
@@ -224,14 +268,20 @@ def add_layer(
 
 
 def update_layer(session: Session, layer: Layer, pm=None, **changes) -> Layer:
-    """Change ``name``, ``type``, ``color`` or ``sequence``. A rename also renames cues using it.
+    """Change ``name``, ``type``, ``color``, ``prefix`` or ``sequence``. A rename also renames
+    cues using it.
 
-    Raises ``ValueError`` on bad input or a duplicate name; nothing is changed in that case.
+    Raises ``ValueError`` on bad input, a duplicate name or a taken prefix; nothing is changed
+    in that case.
     """
     if "type" in changes:
         validate_type(changes["type"], pm)
     if "color" in changes and not is_color(changes["color"]):
         raise ValueError(f'invalid colour {changes["color"]!r}')
+    if "prefix" in changes:
+        changes["prefix"] = check_prefix(
+            session, layer.show_id, changes["prefix"].strip(), layer.id
+        )
     new_name = changes.get("name")
     if new_name is not None:
         new_name = new_name.strip()
@@ -252,7 +302,7 @@ def update_layer(session: Session, layer: Layer, pm=None, **changes) -> Layer:
         ).all():
             cue.layer = new_name
         layer.name = new_name
-    for field in ("type", "color", "sequence"):
+    for field in ("type", "color", "prefix", "sequence"):
         if field in changes:
             setattr(layer, field, changes[field])
     session.add(layer)
