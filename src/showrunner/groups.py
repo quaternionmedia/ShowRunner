@@ -34,6 +34,8 @@ def group_tree(session: Session, cue_list_id: int) -> list[dict]:
             "color": g.color,
             "parent_id": g.parent_id,
             "external_id": g.external_id,
+            "layer": g.layer,
+            "number": g.number,
             "cue_ids": direct.get(g.id, []),
             "member_ids": members(g.id),
         }
@@ -57,6 +59,34 @@ def _cues_in_list(session: Session, cue_list_id: int, cue_ids: list[int]) -> lis
     )
 
 
+def check_number(
+    session: Session,
+    cue_list_id: int,
+    layer: str | None,
+    number: str | None,
+    group_id: int | None,
+) -> None:
+    """Raise ``ValueError`` if *number* on *layer* is already a cue's or another group's."""
+    if not number:
+        return
+    if not layer:
+        raise ValueError("a numbered group needs a layer")
+    cue = session.exec(
+        select(Cue.id).where(
+            Cue.cue_list_id == cue_list_id, Cue.layer == layer,
+            Cue.number == number, Cue.point == 0,
+        )
+    ).first()
+    other = session.exec(
+        select(CueGroup.id).where(
+            CueGroup.cue_list_id == cue_list_id, CueGroup.layer == layer,
+            CueGroup.number == number, CueGroup.id != group_id,
+        )
+    ).first()
+    if cue is not None or other is not None:
+        raise ValueError(f"number {number} is already used on {layer}")
+
+
 def create_group(
     session: Session,
     cue_list_id: int,
@@ -64,9 +94,15 @@ def create_group(
     name: str = "",
     color: str = "grey",
     parent_id: int | None = None,
+    layer: str | None = None,
+    number: str | None = None,
 ) -> CueGroup:
     """New group holding *cue_ids* (taken from any group they were in before)."""
-    group = CueGroup(cue_list_id=cue_list_id, name=name, color=color, parent_id=parent_id)
+    check_number(session, cue_list_id, layer, number, None)
+    group = CueGroup(
+        cue_list_id=cue_list_id, name=name, color=color, parent_id=parent_id,
+        layer=layer or None, number=number or None,
+    )
     session.add(group)
     session.flush()
     for cue in _cues_in_list(session, cue_list_id, cue_ids):
@@ -76,17 +112,18 @@ def create_group(
     return group
 
 
-def update_group(
-    session: Session, group_id: int, name: str | None = None, color: str | None = None
-) -> CueGroup | None:
-    """Rename and/or recolour a group."""
+def update_group(session: Session, group_id: int, **fields) -> CueGroup | None:
+    """Set any passed ``name``, ``color``, ``layer`` or ``number``; None clears layer or number."""
     group = session.get(CueGroup, group_id)
     if group is None:
         return None
-    if name is not None:
-        group.name = name
-    if color is not None:
-        group.color = color
+    layer = fields.get("layer", group.layer) or None
+    number = fields.get("number", group.number) or None
+    check_number(session, group.cue_list_id, layer, number, group.id)
+    for key in ("name", "color"):
+        if fields.get(key) is not None:
+            setattr(group, key, fields[key])
+    group.layer, group.number = layer, number
     session.add(group)
     session.flush()
     return group

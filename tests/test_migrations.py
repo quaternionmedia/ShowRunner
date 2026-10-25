@@ -85,7 +85,18 @@ def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
     assert con.execute('select name, group_id from cues where id = 1').fetchall() == [('a', None)]
     con.close()
 
-    command.downgrade(cfg, '-1')
+    command.downgrade(cfg, '-1')  # the cue QLab-link columns go first
+    con = sqlite3.connect(path)
+    assert not {'external_id', 'external_number'} & {r[1] for r in con.execute('pragma table_info(cues)')}
+    con.close()
+
+    command.upgrade(cfg, 'head')
+    command.downgrade(cfg, '-2')  # then the group number columns
+    con = sqlite3.connect(path)
+    assert not {'layer', 'number'} & {r[1] for r in con.execute('pragma table_info(cue_groups)')}
+    con.close()
+
+    command.downgrade(cfg, '-1')  # then the groups migration itself
     con = sqlite3.connect(path)
     assert 'group_id' not in {r[1] for r in con.execute('pragma table_info(cues)')}
     assert con.execute("select name from sqlite_master where name = 'cue_groups'").fetchall() == []

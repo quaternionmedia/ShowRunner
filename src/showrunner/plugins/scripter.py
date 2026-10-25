@@ -306,21 +306,24 @@ def _load_groups(cue_list_id: int | None, all_lists: bool = False) -> list[dict]
         return [g for lid in ids for g in group_tree(s, lid)]
 
 
-def _group_snapshot(group_id: int) -> dict | None:
+def _group_dict(session, g: CueGroup) -> dict:
     """A group's state as plugin hooks see it: its own cue ids (not its descendants')."""
+    return {
+        'id': g.id,
+        'name': g.name,
+        'color': g.color,
+        'parent_id': g.parent_id,
+        'external_id': g.external_id,
+        'layer': g.layer,
+        'number': g.number,
+        'cue_ids': list(session.exec(select(Cue.id).where(Cue.group_id == g.id))),
+    }
+
+
+def _group_snapshot(group_id: int) -> dict | None:
     with get_db().session() as s:
         g = s.get(CueGroup, group_id)
-        if g is None:
-            return None
-        cue_ids = list(s.exec(select(Cue.id).where(Cue.group_id == g.id)))
-        return {
-            'id': g.id,
-            'name': g.name,
-            'color': g.color,
-            'parent_id': g.parent_id,
-            'external_id': g.external_id,
-            'cue_ids': cue_ids,
-        }
+        return None if g is None else _group_dict(s, g)
 
 
 def _cue_state(cue: Cue) -> dict:
@@ -337,6 +340,8 @@ def _cue_state(cue: Cue) -> dict:
         'sequence': cue.sequence,
         'script_line': cue.script_line,
         'script_char': cue.script_char,
+        'external_id': cue.external_id,
+        'external_number': cue.external_number,
     }
 
 
@@ -502,19 +507,21 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 return None
             return lists.pop()
 
-        def _create_group(cl_id: int, cue_ids: list[int], name: str, color: str) -> None:
+        def _create_group(cl_id: int, cue_ids: list[int], name: str, color: str, layer=None, number=None) -> None:
             """New group around *cue_ids*, nested in the smallest existing group that already holds them all."""
             with get_db().session() as s:
                 parent = container_for(s, cl_id, cue_ids)
-                gid = create_group(s, cl_id, cue_ids, name=name, color=color, parent_id=parent).id
+                gid = create_group(s, cl_id, cue_ids, name=name, color=color, parent_id=parent,
+                                   layer=layer, number=number).id
                 s.commit()
             _notify_group('create', _group_snapshot(gid))
             refresh_all()
 
-        def _update_group(group_id: int, name: str, color: str) -> None:
+        def _update_group(group_id: int, **fields) -> None:
+            """Change a group's name, colour, layer or number (ValueError if the number is taken)."""
             before = _group_snapshot(group_id)
             with get_db().session() as s:
-                update_group(s, group_id, name=name, color=color)
+                update_group(s, group_id, **fields)
                 s.commit()
             _notify_group('update', _group_snapshot(group_id), before)
             refresh_all()
@@ -555,6 +562,16 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 colour_in = ui.select(
                     GROUP_COLOURS, value=_group_colour((group or {}).get('color')), label='Colour'
                 ).classes('w-full')
+                # A new group takes the layer its cues share, numbered like a cue on that layer
+                layer_default = (group or {}).get('layer')
+                if group is None and cue_ids:
+                    with get_db().session() as s:
+                        shared = set(s.exec(select(Cue.layer).where(Cue.id.in_(cue_ids))))
+                    layer_default = shared.pop() if len(shared) == 1 else None
+                with ui.row().classes('w-full items-end gap-2'):
+                    layer_in = ui.select(list(layers_by_name['v']), value=layer_default, label='Layer',
+                                         clearable=True).classes('flex-1')
+                    number_in = ui.input(label='Number', value=(group or {}).get('number') or '').classes('flex-1')
                 # Unticking a cue unlinks it from this group on Save
                 member_checks: dict[int, ui.checkbox] = {}
                 if group and group['cue_ids']:
@@ -573,13 +590,18 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
                 def _save(_):
                     name, colour = name_in.value.strip(), colour_in.value
-                    if group:
-                        keep = [cid for cid, box in member_checks.items() if box.value]
-                        _update_group(group['id'], name, colour)
-                        if len(keep) != len(member_checks):
-                            _set_group_members(group['id'], keep)
-                    else:
-                        _create_group(cl_id, cue_ids, name, colour)
+                    layer, number = layer_in.value or None, (number_in.value or '').strip() or None
+                    try:
+                        if group:
+                            keep = [cid for cid, box in member_checks.items() if box.value]
+                            _update_group(group['id'], name=name, color=colour, layer=layer, number=number)
+                            if len(keep) != len(member_checks):
+                                _set_group_members(group['id'], keep)
+                        else:
+                            _create_group(cl_id, cue_ids, name, colour, layer, number)
+                    except ValueError as exc:
+                        ui.notify(str(exc), type='negative')
+                        return
                     dlg.close()
 
                 with ui.row().classes('w-full justify-between items-center mt-2'):
@@ -993,7 +1015,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 boxes = [
                     {
                         'id': g['id'],
-                        'name': g['name'] or '(unnamed)',
+                        'name': ' '.join(filter(None, [
+                            _cue_number_label({'number': g['number'], 'point': 0, 'layer': g['layer']})
+                            if g['number'] else '',
+                            g['name'] or '(unnamed)',
+                        ])),
                         'color': _group_colour(g['color']),
                         'nest': deepest - depths[g['id']],  # outer boxes sit outside inner ones
                         'cue_ids': [i for i in g['member_ids'] if i in on_page],
@@ -1456,12 +1482,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             increment: int,
             include_unnumbered: bool,
             apply: bool,
-        ) -> list[tuple[int, str, str, dict]]:
-            """Renumber cues on *layer* in the show's scope.
+        ) -> list[tuple[str, int, str, str, dict]]:
+            """Renumber cues and groups on *layer* in the show's scope.
 
-            Returns ``(cue_id, old_label, new_label, state_before)`` per changed cue. Everything
-            runs in one session, so an error in any list changes nothing; the session is only
-            committed when *apply* is true.
+            Returns ``(kind, id, old_label, new_label, state_before)`` per changed item; kind is
+            'cue' or 'group'. Everything runs in one session, so an error in any list changes
+            nothing; the session is only committed when *apply* is true.
             """
             show_id = selected_show_id['v']
             list_ids = _renumber_list_ids(show_id)
@@ -1469,12 +1495,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             with get_db().session() as s:
                 for cl_id in list_ids:
                     before = {
-                        c.id: _cue_state(c)
-                        for c in s.exec(
-                            select(Cue).where(Cue.cue_list_id == cl_id, Cue.layer == layer)
-                        ).all()
+                        ('cue', c.id): _cue_state(c)
+                        for c in s.exec(select(Cue).where(Cue.cue_list_id == cl_id, Cue.layer == layer)).all()
                     }
-                    for cid, old, new in renumber_cues(
+                    before.update({
+                        ('group', g.id): _group_dict(s, g)
+                        for g in s.exec(select(CueGroup).where(CueGroup.cue_list_id == cl_id, CueGroup.layer == layer)).all()
+                    })
+                    for item, old, new in renumber_cues(
                         s,
                         cl_id,
                         layer,
@@ -1483,7 +1511,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         increment=increment,
                         include_unnumbered=include_unnumbered,
                     ):
-                        changes.append((cid, old, new, before[cid]))
+                        kind = 'group' if isinstance(item, CueGroup) else 'cue'
+                        changes.append((kind, item.id, old, new, before[(kind, item.id)]))
                 if apply:
                     s.commit()
             return changes
@@ -1527,7 +1556,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         return
                     ui.label(f'{len(changes)} cues will change:')
                     with ui.scroll_area().style('height: 240px'):
-                        for _, old, new, _before in changes:
+                        for _, _, old, new, _before in changes:
                             ui.label(f'{old or "(unnumbered)"} → {new}')
 
             def _apply():
@@ -1541,12 +1570,18 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     ui.notify('No cues in that range.', type='warning')
                     return
                 layer = layer_in.value
-                for cid, _old, _new, before in changes:
-                    _notify_cue('update', cid, before)
+                for kind, iid, _old, _new, before in changes:
+                    if kind == 'cue':
+                        _notify_cue('update', iid, before)
+                    else:
+                        _notify_group('update', _group_snapshot(iid), before)
 
-                def _restore(items=[(cid, before) for cid, _, _, before in changes]):
-                    for cid, before in items:
-                        _update_cue(cid, False, number=before['number'])
+                def _restore(items=[(kind, iid, before) for kind, iid, _, _, before in changes]):
+                    for kind, iid, before in items:
+                        if kind == 'cue':
+                            _update_cue(iid, False, number=before['number'])
+                        else:
+                            _update_group(iid, number=before['number'])
 
                 _push_undo(f'Renumber {layer} ({len(changes)} cues)', _restore)
                 ui.notify(f'Renumbered {len(changes)} cues')

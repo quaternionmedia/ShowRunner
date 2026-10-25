@@ -1,5 +1,6 @@
 """Cue groups: nesting, membership, delete reparenting, and cue delete."""
 
+import pytest
 from sqlmodel import select
 
 from showrunner.groups import (
@@ -10,7 +11,7 @@ from showrunner.groups import (
     set_members,
     update_group,
 )
-from showrunner.models import Cue, CueList, Show
+from showrunner.models import Cue, CueGroup, CueList, Show
 
 
 def _setup(db, n=4):
@@ -137,3 +138,23 @@ def test_update_group_name_and_colour(db):
     with db.session() as s:
         [node] = group_tree(s, cl)
     assert (node["name"], node["color"]) == ("Renamed", "blue")
+
+
+def test_group_number_is_unique_per_layer_and_renumbers_with_cues(db):
+    """A group's number shares the layer's number space with cues, and renumber moves it too."""
+    from showrunner.renumber import renumber_cues
+
+    cl, ids = _setup(db, n=3)  # cues numbered 1, 2, 3 on Lights
+    with db.session() as s:
+        with pytest.raises(ValueError, match='already used'):
+            create_group(s, cl, ids[:1], layer="Lights", number="2")
+        s.rollback()
+        g = create_group(s, cl, ids[:1], layer="Lights", number="10")
+        g_id = g.id
+        s.commit()
+    with db.session() as s:
+        changes = renumber_cues(s, cl, "Lights", (10, 10), start=20)
+        s.commit()
+    assert [(isinstance(item, CueGroup), old, new) for item, old, new in changes] == [(True, "10", "20")]
+    with db.session() as s:
+        assert s.get(CueGroup, g_id).number == "20"
