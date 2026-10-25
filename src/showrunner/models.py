@@ -115,6 +115,8 @@ class CueGroup(SQLModel, table=True):
     color: str = 'grey'  # Quasar colour name
     parent_id: int | None = Field(default=None, foreign_key='cue_groups.id')
     external_id: str | None = None
+    layer: str | None = None  # layer name; numbers the group like a cue on that layer
+    number: str | None = None  # main number (e.g. "5"); None = unnumbered
 
 
 class Cue(SQLModel, table=True):
@@ -141,6 +143,10 @@ class Cue(SQLModel, table=True):
         None  # character offset within the line (None = start of line)
     )
     group_id: int | None = Field(default=None, foreign_key='cue_groups.id')  # innermost group
+    # QLab link, set by the QLab plugin: the cue's uniqueID there, and the QLab number it had
+    # at the last sync (so a change on either side can be told apart)
+    external_id: str | None = None
+    external_number: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
     cue_list: Optional[CueList] = Relationship(back_populates='cues')
