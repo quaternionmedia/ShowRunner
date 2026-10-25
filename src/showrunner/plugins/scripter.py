@@ -17,16 +17,6 @@ from sqlmodel import select
 
 import showrunner
 from showrunner import ui as _sr_ui
-from showrunner.layers import cue_number_label
-from showrunner.layers import (
-    add_layer,
-    delete_layer,
-    get_layer_types,
-    get_layers,
-    hook_results,
-    is_color,
-    update_layer,
-)
 from showrunner.groups import (
     container_for,
     create_group,
@@ -35,6 +25,16 @@ from showrunner.groups import (
     group_tree,
     set_members,
     update_group,
+)
+from showrunner.layers import (
+    add_layer,
+    cue_number_label,
+    delete_layer,
+    get_layer_types,
+    get_layers,
+    hook_results,
+    is_color,
+    update_layer,
 )
 from showrunner.models import Cue, CueGroup, CueList, Layer, Script
 from showrunner.plugins.db import get_db
@@ -49,6 +49,11 @@ PAGE_BREAK_RE = re.compile(r'\[\[Page\s+(.+?)\]\]')
 DEFAULT_UNDO_LEVELS = 50
 GROUP_COLOURS = ['grey', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'teal', 'cyan', 'blue', 'indigo', 'purple', 'pink']
 
+
+def _group_colour(colour) -> str:
+    """A colour the group picker offers; anything else (e.g. QLab's 'none') shows as grey."""
+    return colour if colour in GROUP_COLOURS else 'grey'
+
 # Draws group boxes around the chips of each group (window.srDrawGroups) and the rubber-band
 # selection in group mode (window.srGroupMode). Chips carry data-cue-id; the host is #sr-script-host.
 _GROUP_JS = """
@@ -59,27 +64,54 @@ window.srDrawGroups = (groups, tries = 0) => {
   window.srLast = groups;
   ov.innerHTML = '';
   const host = ov.parentElement, base = ov.getBoundingClientRect();
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', base.width);
+  svg.setAttribute('height', base.height);
+  svg.style.cssText = 'position:absolute;left:0;top:0;overflow:visible;';
+  ov.appendChild(svg);
+  const allLines = [...host.querySelectorAll('[data-line]')];
   for (const g of groups) {
-    // Box spans the full text width of each member line, and the chips' top edge
     const chips = g.cue_ids.map(id => host.querySelector(`[data-cue-id="${id}"]`)).filter(Boolean);
-    const lines = [...new Set(chips.map(el => el.closest('[data-line]')).filter(Boolean))];
-    if (!lines.length) continue;
-    const rs = lines.map(el => el.getBoundingClientRect());
-    const tops = chips.map(el => el.getBoundingClientRect().top);
+    const memberLines = new Set(chips.map(el => el.closest('[data-line]')).filter(Boolean));
+    if (!memberLines.size) continue;
+    // One row per line from the group's first to its last member line. A row spans only the
+    // member cues on that line, so other cues on the same line stay outside the box.
+    const idx = allLines.map((el, i) => memberLines.has(el) ? i : -1).filter(i => i >= 0);
+    const span = allLines.slice(Math.min(...idx), Math.max(...idx) + 1);
     const pad = 4 + g.nest * 4;
-    const l = Math.min(...rs.map(r => r.left)) - base.left - pad;
-    const t = Math.min(...rs.map(r => r.top), ...tops) - base.top - pad - 10;
-    const rt = Math.max(...rs.map(r => r.right)) - base.left + pad;
-    const b = Math.max(...rs.map(r => r.bottom)) - base.top + pad;
-    const box = document.createElement('div');
-    box.className = `text-${g.color}`;
-    box.style.cssText = `position:absolute;left:${l}px;top:${t}px;width:${rt - l}px;height:${b - t}px;border:2px solid currentColor;border-radius:6px;`;
+    const raw = span.map(el => {
+      const r = el.getBoundingClientRect();
+      const mine = chips.filter(c => el.contains(c)).map(c => c.getBoundingClientRect());
+      return {
+        l: (mine.length ? Math.min(...mine.map(m => m.left)) : r.left) - base.left,
+        r: (mine.length ? Math.max(...mine.map(m => m.right)) : r.right) - base.left,
+        t: Math.min(r.top, ...mine.map(m => m.top)) - base.top,
+        b: r.bottom - base.top,
+      };
+    });
+    const n = raw.length;
+    // Row edges meet halfway between lines, so the rows form one continuous outline
+    const edge = [raw[0].t - pad - 10];
+    for (let i = 1; i < n; i++) edge.push((raw[i - 1].b + raw[i].t) / 2);
+    edge.push(raw[n - 1].b + pad);
+    const rows = raw.map((r, i) => ({l: r.l - pad, r: r.r + pad, t: edge[i], b: edge[i + 1]}));
+    const pts = [];
+    rows.forEach(r => pts.push([r.r, r.t], [r.r, r.b]));
+    rows.slice().reverse().forEach(r => pts.push([r.l, r.b], [r.l, r.t]));
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M' + pts.map(p => p.join(',')).join(' L') + ' Z');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('class', `text-${g.color}`);
+    svg.appendChild(path);
     const label = document.createElement('div');
     label.textContent = g.name;
-    label.style.cssText = 'position:absolute;top:-0.9em;left:8px;padding:0 4px;background:#121212;font-size:0.7rem;white-space:nowrap;pointer-events:auto;cursor:pointer;';
+    label.style.cssText = `position:absolute;left:${rows[0].l + 8}px;top:${edge[0]}px;transform:translateY(-100%);padding:0 4px;background:#121212;font-size:0.7rem;white-space:nowrap;pointer-events:auto;cursor:pointer;z-index:2;color:inherit;`;
+    label.className = `text-${g.color}`;
     label.addEventListener('click', () => ov.dispatchEvent(new CustomEvent('srgroup', {detail: g.id})));
-    box.appendChild(label);
-    ov.appendChild(box);
+    ov.appendChild(label);
   }
   if (!window.srResizeHooked) {
     window.srResizeHooked = true;
@@ -496,6 +528,15 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             _notify_group('delete', before)
             refresh_all()
 
+        def _set_group_members(gid: int, cue_ids: list[int]) -> None:
+            """Make *cue_ids* the group's own cues; the ones it drops move to the enclosing group."""
+            before = _group_snapshot(gid)
+            with get_db().session() as s:
+                set_members(s, gid, cue_ids)
+                s.commit()
+            _notify_group('members', _group_snapshot(gid), before)
+            refresh_all()
+
         def _remove_from_group(cue_id: int) -> None:
             with get_db().session() as s:
                 cue = s.get(Cue, cue_id)
@@ -503,11 +544,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             before = _group_snapshot(gid) if gid is not None else None
             if before is None:
                 return
-            with get_db().session() as s:
-                set_members(s, gid, [c for c in before['cue_ids'] if c != cue_id])
-                s.commit()
-            _notify_group('members', _group_snapshot(gid), before)
-            refresh_all()
+            _set_group_members(gid, [c for c in before['cue_ids'] if c != cue_id])
 
         def open_group_dialog(group: dict | None, cue_ids: list[int] | None = None, cl_id: int | None = None) -> None:
             """Name and colour for a new group (*cue_ids* and *cl_id*) or an existing one (*group*)."""
@@ -516,13 +553,31 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 ui.label('Edit group' if group else 'New group').classes('text-subtitle2 font-bold')
                 name_in = ui.input(label='Name', value=(group or {}).get('name', '')).classes('w-full')
                 colour_in = ui.select(
-                    GROUP_COLOURS, value=(group or {}).get('color', 'grey'), label='Colour'
+                    GROUP_COLOURS, value=_group_colour((group or {}).get('color')), label='Colour'
                 ).classes('w-full')
+                # Unticking a cue unlinks it from this group on Save
+                member_checks: dict[int, ui.checkbox] = {}
+                if group and group['cue_ids']:
+                    ui.label('Cues in this group').classes('text-caption text-grey mt-2')
+                    with get_db().session() as s:
+                        members = s.exec(
+                            select(Cue).where(Cue.id.in_(group['cue_ids']))
+                            .order_by(Cue.script_line, Cue.script_char)
+                        ).all()
+                        rows = [(c.id, c.layer or '', _cue_number_label({'number': c.number, 'point': c.point,
+                                                                       'layer': c.layer}), c.name or '')
+                                for c in members]
+                    for cid, layer, number, name in rows:
+                        text = ' '.join(part for part in (layer, number, name) if part)
+                        member_checks[cid] = ui.checkbox(text, value=True)
 
                 def _save(_):
                     name, colour = name_in.value.strip(), colour_in.value
                     if group:
+                        keep = [cid for cid, box in member_checks.items() if box.value]
                         _update_group(group['id'], name, colour)
+                        if len(keep) != len(member_checks):
+                            _set_group_members(group['id'], keep)
                     else:
                         _create_group(cl_id, cue_ids, name, colour)
                     dlg.close()
@@ -938,8 +993,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 boxes = [
                     {
                         'id': g['id'],
-                        'name': g['name'] or 'Group',
-                        'color': g['color'] if is_color(g['color']) else 'grey',
+                        'name': g['name'] or '(unnamed)',
+                        'color': _group_colour(g['color']),
                         'nest': deepest - depths[g['id']],  # outer boxes sit outside inner ones
                         'cue_ids': [i for i in g['member_ids'] if i in on_page],
                     }
