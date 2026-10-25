@@ -134,6 +134,7 @@ def test_plugin_type_and_layer_are_seeded(db):
     assert layers[-1] == {
         "id": layers[-1]["id"],
         "name": "Mix",
+        "prefix": "Mix",
         "color": "pink",
         "type": "mix",
         "sequence": 5,
@@ -309,3 +310,54 @@ def test_layer_routes(tmp_path, monkeypatch):
         assert c.put(f'/db/layers/{lid}?name=FX2').json()['name'] == 'FX2'
         assert c.delete(f'/db/layers/{lid}').status_code == 200
         assert c.delete(f'/db/layers/{lid}').status_code == 404
+
+
+def test_default_layers_get_prefixes(db, show):
+    with db.session() as s:
+        got = {r.name: r.prefix for r in s.exec(select(Layer).where(Layer.show_id == show)).all()}
+    assert got == {"Lights": "", "Sound": "s", "Video": "v", "Audio": "a", "Stage": "Stage"}
+
+
+def test_one_default_prefix_and_prefix_rules(db, show):
+    with db.session() as s:
+        with pytest.raises(ValueError, match="only one layer may be the default"):
+            L.add_layer(s, show, "Fog", "generic", "grey", prefix="")
+        with pytest.raises(ValueError, match="letters only"):
+            L.add_layer(s, show, "Fog", "generic", "grey", prefix="F2")
+        with pytest.raises(ValueError, match="already used by layer 'Sound'"):
+            L.add_layer(s, show, "Fog", "generic", "grey", prefix="S")  # case-insensitive
+        with pytest.raises(ValueError, match="give the layer a prefix"):
+            L.add_layer(s, show, "123", "generic", "grey")
+
+
+def test_add_layer_derives_prefix_from_name_and_update_checks_it(db, show):
+    with db.session() as s:
+        fx = L.add_layer(s, show, "Sound FX 2", "generic", "grey")
+        assert fx.prefix == "SoundFX"
+        stage = s.exec(select(Layer).where(Layer.name == "Stage")).one()
+        L.update_layer(s, stage, prefix="ST")
+        assert stage.prefix == "ST"
+        lights = s.exec(select(Layer).where(Layer.name == "Lights")).one()
+        with pytest.raises(ValueError, match="only one layer may be the default"):
+            L.update_layer(s, stage, prefix="")
+        L.update_layer(s, lights, prefix="L")  # the old default can give up the empty prefix
+        L.update_layer(s, stage, prefix="")
+        assert [r.prefix for r in s.exec(select(Layer).order_by(Layer.sequence)).all()] == [
+            "L", "s", "v", "a", "", "SoundFX"]
+
+
+class EmptyPrefixPlugin:
+    @showrunner.hookimpl
+    def showrunner_get_layers(self):
+        return {"name": "Dark", "color": "grey", "type": "generic", "prefix": ""}
+
+
+def test_plugin_layer_cannot_take_a_used_prefix(db):
+    with db.session() as s:
+        sh = Show(name="Clash")
+        s.add(sh)
+        s.commit()
+        s.refresh(sh)
+        L.ensure_layers(s, sh.id, _pm(EmptyPrefixPlugin()))
+        names = [r.name for r in s.exec(select(Layer).where(Layer.show_id == sh.id)).all()]
+    assert "Dark" not in names  # '' is Lights' prefix in the seeded defaults

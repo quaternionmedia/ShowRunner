@@ -59,6 +59,40 @@ def _cues_in_list(session: Session, cue_list_id: int, cue_ids: list[int]) -> lis
     )
 
 
+def next_number(session: Session, cue_list_id: int, layer: str, cue_ids: list[int]) -> str:
+    """Next free whole number on *layer* after the item placed just before *cue_ids* in the script.
+
+    Items are the layer's numbered cues and groups; a group sits at its earliest positioned
+    member. With no script position for *cue_ids*, the number follows the layer's highest.
+    """
+    own = {c.id: c for c in session.exec(select(Cue).where(Cue.cue_list_id == cue_list_id)).all()}
+    taken: set[int] = set()
+    placed: list[tuple[tuple[int, int], int]] = []  # (script position, number)
+    for c in own.values():
+        if c.layer == layer and c.point == 0 and (c.number or '').isdigit():
+            taken.add(int(c.number))
+            if c.script_line is not None:
+                placed.append(((c.script_line, c.script_char or 0), int(c.number)))
+    for g in group_tree(session, cue_list_id):
+        if g['layer'] == layer and (g['number'] or '').isdigit():
+            taken.add(int(g['number']))
+            pos = [(own[i].script_line, own[i].script_char or 0) for i in g['member_ids']
+                   if i in own and own[i].script_line is not None]
+            if pos:
+                placed.append((min(pos), int(g['number'])))
+    anchor_pos = [(own[i].script_line, own[i].script_char or 0) for i in cue_ids
+                  if i in own and own[i].script_line is not None]
+    if anchor_pos:
+        before = [item for item in placed if item[0] < min(anchor_pos)]
+        start = max(before)[1] + 1 if before else 1  # max() on (position, number): latest in script
+    else:
+        start = max(taken, default=0) + 1
+    number = start
+    while number in taken:
+        number += 1
+    return str(number)
+
+
 def check_number(
     session: Session,
     cue_list_id: int,

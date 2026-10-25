@@ -23,6 +23,7 @@ from showrunner.groups import (
     delete_group,
     group_depths,
     group_tree,
+    next_number,
     set_members,
     update_group,
 )
@@ -395,6 +396,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         # per-browser (server-side user storage), restored on page load
         show_details: dict = {'v': bool(nicegui_app.storage.user.get('show_details', False))}
 
+        # new groups pre-fill the next free number on their layer (per-browser, like the others)
+        auto_number: dict = {'v': bool(nicegui_app.storage.user.get('auto_number_groups', False))}
+
         # toggle for plugin preview chips
         show_previews: dict = {
             'v': bool(nicegui_app.storage.user.get('show_previews', cfg.get('show-previews', True)))
@@ -563,15 +567,27 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     GROUP_COLOURS, value=_group_colour((group or {}).get('color')), label='Colour'
                 ).classes('w-full')
                 # A new group takes the layer its cues share, numbered like a cue on that layer
+                # A new group takes the active layer; with auto-number on, its number is pre-filled
                 layer_default = (group or {}).get('layer')
-                if group is None and cue_ids:
+                if group is None:
+                    layer_default = selected_layer['v'] if selected_layer['v'] in layers_by_name['v'] else None
+
+                def _suggest(layer_name: str | None) -> str:
+                    if group is not None or cl_id is None or not cue_ids or not layer_name:
+                        return ''
+                    if not auto_number['v']:
+                        return ''
                     with get_db().session() as s:
-                        shared = set(s.exec(select(Cue.layer).where(Cue.id.in_(cue_ids))))
-                    layer_default = shared.pop() if len(shared) == 1 else None
+                        return next_number(s, cl_id, layer_name, cue_ids)
+
                 with ui.row().classes('w-full items-end gap-2'):
                     layer_in = ui.select(list(layers_by_name['v']), value=layer_default, label='Layer',
                                          clearable=True).classes('flex-1')
-                    number_in = ui.input(label='Number', value=(group or {}).get('number') or '').classes('flex-1')
+                    number_in = ui.input(label='Number', value=(group or {}).get('number') or _suggest(layer_default)).classes('flex-1')
+                    if group is None:
+                        layer_in.on_value_change(
+                            lambda e: number_in.set_value(_suggest(e.value)) if auto_number['v'] else None
+                        )
                 # Unticking a cue unlinks it from this group on Save
                 member_checks: dict[int, ui.checkbox] = {}
                 if group and group['cue_ids']:
@@ -1402,12 +1418,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     new_name = ui.input('New layer name').classes('flex-1')
                     new_type = ui.select(type_labels, value='generic', label='Type').classes('w-40')
                     new_color = ui.input('Colour', value='grey').classes('w-32')
+                    new_prefix = ui.input('Prefix', placeholder='from name').classes('w-32')
 
                     def _add():
                         try:
                             with get_db().session() as s:
                                 add_layer(s, show_id, new_name.value, new_type.value,
-                                          new_color.value, _sr_ui._pm)
+                                          new_color.value, _sr_ui._pm,
+                                          prefix=new_prefix.value.strip() or None)
                         except ValueError as exc:
                             ui.notify(str(exc), type='negative')
                             return
@@ -1416,11 +1434,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
                     ui.button('Add', on_click=_add)
 
-            def _save(lid, name, type_, color):
+            def _save(lid, name, type_, color, prefix):
                 try:
                     with get_db().session() as s:
                         update_layer(s, s.get(Layer, lid), _sr_ui._pm,
-                                     name=name, type=type_, color=color)
+                                     name=name, type=type_, color=color, prefix=prefix.strip())
                 except ValueError as exc:
                     ui.notify(str(exc), type='negative')
                     return
@@ -1449,10 +1467,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                             name_in = ui.input('Name', value=r['name']).classes('flex-1')
                             type_in = ui.select(opts, value=r['type'], label='Type').classes('w-40')
                             color_in = ui.input('Colour', value=r['color']).classes('w-32')
+                            prefix_in = ui.input('Prefix', value=r['prefix']).classes('w-24')
                             ui.button(
                                 icon='save',
-                                on_click=lambda _, lid=r['id'], n=name_in, t=type_in, c=color_in:
-                                    _save(lid, n.value, t.value, c.value),
+                                on_click=lambda _, lid=r['id'], n=name_in, t=type_in, c=color_in,
+                                    p=prefix_in: _save(lid, n.value, t.value, c.value, p.value),
                             ).props('flat dense').tooltip('Save')
                             ui.button(
                                 icon='delete', color='red',
@@ -1598,7 +1617,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     start_in = ui.number('Start at (blank = first in range)', precision=0).classes('flex-1')
                     inc_in = ui.number('Increment', value=1, min=1, precision=0).classes('flex-1')
                 unnumbered_in = ui.checkbox('Include unnumbered cues').tooltip(
-                    'Number unnumbered cues whose script position falls within the range, '
+                    'Number every unnumbered cue on this layer that has a script position, '
                     'in script order. Cues with no script position are skipped.'
                 )
                 ui.separator()
@@ -1618,6 +1637,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             nicegui_app.storage.user['show_details'] = show_details['v']
             render_toolbar()
             render_script_content()
+
+        def toggle_auto_number():
+            auto_number['v'] = not auto_number['v']
+            nicegui_app.storage.user['auto_number_groups'] = auto_number['v']
+            render_toolbar()
 
         def toggle_previews():
             show_previews['v'] = not show_previews['v']
@@ -1693,6 +1717,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     on_click=toggle_previews,
                     color='white' if show_previews['v'] else None,
                 ).props('dense unelevated' if show_previews['v'] else 'dense outline')
+                ui.button(
+                    'Auto-number groups',
+                    icon='format_list_numbered',
+                    on_click=toggle_auto_number,
+                    color='white' if auto_number['v'] else None,
+                ).props('dense unelevated' if auto_number['v'] else 'dense outline')
                 ui.separator().props('vertical')
                 ui.button(
                     'Add Cue (no position)',

@@ -97,6 +97,7 @@ class Layer(SQLModel, table=True):
     color: str = 'grey'  # Quasar colour name
     type: str = 'generic'
     sequence: int = Field(default=0)
+    prefix: str = ''  # QLab-style number prefix; letters only, '' is the show's one default layer
 
     show: Optional[Show] = Relationship(back_populates='layers')
 
