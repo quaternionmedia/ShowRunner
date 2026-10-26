@@ -78,13 +78,15 @@ uv sync
 
 ### Optional: Admin Panel
 
-To enable the SQLAdmin web interface, install the `admin` dependency group:
+To enable the SQLAdmin web interface, install the `admin` extra:
 
 ```bash
-uv sync --group admin
+uv sync --extra admin
 ```
 
 This adds `sqladmin` and `wtforms`. The admin panel will then be available at `/admin` when the server is running.
+
+`uv sync` removes extras you leave out, so pass every extra you use, e.g. `uv sync --extra admin --extra cli`.
 
 ---
 
@@ -109,7 +111,7 @@ Once running, open: [http://localhost:8000](http://localhost:8000) to access the
 | ---------------------------------- | ------------------------------------ |
 | http://localhost:8000              | Dashboard (show selector)            |
 | http://localhost:8000/script       | Script viewer and cue editor         |
-| http://localhost:8000/admin        | Admin panel _(requires admin group)_ |
+| http://localhost:8000/admin        | Admin panel _(requires admin extra)_ |
 | http://localhost:8000/api          | FastAPI / OpenAPI interactive docs   |
 | http://localhost:8000/openapi.json | Raw OpenAPI schema                   |
 

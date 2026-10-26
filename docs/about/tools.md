@@ -18,7 +18,7 @@ PDF export of scripts with cue annotations, mounted at `/export` (API-only)
 
 ### **ShowAdmin**
 
-Web-based database admin panel mounted at `/admin` _(requires install `admin` group)_
+Web-based database admin panel mounted at `/admin` _(requires install `admin` extra)_
 
 ### **ShowDesigner**
 

@@ -142,7 +142,7 @@ def showrunner_startup(self, app):
 | `admin`  | `sqladmin`, `wtforms`                | `ShowAdmin` panel at `/admin`            |
 | `dev`    | `uvicorn`, `pytest`, `ruff`, `black` | Dev server and tooling                   |
 
-Install with `uv sync --group <name>` or `uv sync --all-extras`.
+Install an extra with `uv sync --extra <name>`. `uv sync` removes extras you leave out, so list every one you use (e.g. `uv sync --extra admin --extra cli`), or use `uv sync --all-extras`.
 
 ## Deployment Note
 
