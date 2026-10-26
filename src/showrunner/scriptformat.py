@@ -101,6 +101,26 @@ def classify_lines(lines: list[str]) -> list[str]:
     return types
 
 
+def outline(lines: list[str], kinds: list[str]) -> list[dict]:
+    """Sections and scene headings in script order: ``{'line', 'level', 'text'}`` (line is 1-based).
+
+    A section's level is its ``#`` count; a scene heading sits one level below its section.
+    """
+    items, section_level = [], 0
+    for i, (raw, kind) in enumerate(zip(lines, kinds)):
+        if kind not in ('section', 'heading'):
+            continue
+        text = _PAGE_MARKER.sub('', raw).strip()
+        if kind == 'section':
+            section_level = len(text) - len(text.lstrip('#'))
+            level, text = section_level, text.lstrip('#')
+        else:
+            text = text[1:] if text.startswith('.') else text  # a leading '.' forces a heading
+            level = section_level + 1
+        items.append({'line': i + 1, 'level': level, 'text': text.strip() or '(untitled)'})
+    return items
+
+
 def map_script_lines(old: str, new: str) -> list[int]:
     """New line index for every old line, so cues follow the text they sit on.
 

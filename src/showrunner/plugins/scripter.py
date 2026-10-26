@@ -40,7 +40,13 @@ from showrunner.layers import (
 from showrunner.models import Cue, CueGroup, CueList, Layer, Script
 from showrunner.plugins.db import get_db
 from showrunner.renumber import renumber_cues
-from showrunner.scriptformat import DEFAULT_LINE_HEIGHT, block_css, classify_lines, load_styles
+from showrunner.scriptformat import (
+    DEFAULT_LINE_HEIGHT,
+    block_css,
+    classify_lines,
+    load_styles,
+    outline,
+)
 from showrunner.ui import _current_script_id, _current_show_id, header
 
 ALL_LISTS = 0  # cue-list filter value meaning "every cue list in the show"
@@ -416,6 +422,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         scroll_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
         toolbar_ref: dict = {'el': None}
+        toc_ref: dict = {'el': None}
 
         # ---- helpers --------------------------------------------------------
         def _load_scripts():
@@ -1282,6 +1289,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             render_toolbar()
             render_script_content()
             render_unpositioned()
+            render_toc()
 
         def go_to_page(page: int):
             page = max(0, min(page, total_pages['v'] - 1))
@@ -1298,6 +1306,36 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         go_to_page(idx)
                         return
             go_to_page(total_pages['v'] - 1)
+
+        def go_to_script_line(line: int):
+            """Show *line* from the outline: switch to its page, then scroll its row into view."""
+            go_to_line(line)
+            ui.timer(0.1, lambda: ui.run_javascript(
+                f'document.querySelector(\'[data-line="{line}"]\')?.scrollIntoView({{block: "start"}})'
+            ), once=True)
+
+        def render_toc():
+            """Fill the outline drawer with the script's sections and scene headings, each linked to its line."""
+            container = toc_ref['el']
+            if container is None:
+                return
+            container.clear()
+            sid = selected_script_id['v']
+            with get_db().session() as s:
+                script = s.get(Script, sid) if sid is not None else None
+                content = script.content if script else None
+            lines = content.split('\n') if content else []
+            items = outline(lines, classify_lines(lines))
+            with container:
+                if not items:
+                    ui.label('No sections or scene headings.').classes('text-grey text-sm')
+                for it in items:
+                    ui.button(
+                        it['text'],
+                        on_click=lambda _, ln=it['line']: go_to_script_line(ln),
+                    ).props('flat dense no-caps align=left').style(
+                        f'margin-left: {(it["level"] - 1) * 0.75}rem'
+                    )
 
         def _go_to_page_label(value):
             """Jump to a page by label, finding the nearest match if exact is missing.
@@ -1661,6 +1699,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 return
             container.clear()
             with container:
+                ui.button('Outline', icon='toc', on_click=lambda: toc_drawer.toggle()).props('flat dense')
+                ui.separator().props('vertical')
                 ui.label('Current Layer:').classes('text-sm font-bold')
                 for name, info in layers_by_name['v'].items():
                     is_active = selected_layer['v'] == name
@@ -1852,6 +1892,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         page, flt = saved.get('page'), saved.get('list')
                         current_page['v'] = page if isinstance(page, int) and page > 0 else 0
                         list_filter['v'] = flt if isinstance(flt, int) else None
+
+        # Outline drawer: sections and scene headings of the script (filled by render_toc)
+        toc_drawer = ui.left_drawer(value=False, bordered=True)
+        with toc_drawer:
+            ui.label('Outline').classes('text-h6 p-3')
+            toc_ref['el'] = ui.column().classes('w-full gap-0 px-2 pb-4 overflow-auto')
 
         # Toolbar
         toolbar_ref['el'] = ui.row().classes(
