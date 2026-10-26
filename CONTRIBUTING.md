@@ -53,7 +53,7 @@ source .venv/bin/activate
 > **Optional admin panel** (SQLAdmin web interface):
 >
 > ```bash
-> uv sync --group admin
+> uv sync --extra admin
 > ```
 
 `uv sync` creates `.venv/` in the project root and installs everything declared in `pyproject.toml`. If you do not want to activate the virtual environment, you can run commands with `uv run [cmd]`, which automatically uses the correct Python and dependencies:
@@ -77,7 +77,7 @@ Useful URLs once running:
 | http://localhost:8000        | Dashboard                            |
 | http://localhost:8000/script | Script viewer / cue editor           |
 | http://localhost:8000/api    | Interactive OpenAPI docs             |
-| http://localhost:8000/admin  | Admin panel _(requires admin group)_ |
+| http://localhost:8000/admin  | Admin panel _(requires admin extra)_ |
 
 ---
 

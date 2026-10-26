@@ -61,7 +61,7 @@ Use `sr --help` for CLI options and `sr [tool] --help` for tool-specific command
 
 ## Tools
 
-- **ShowAdmin**: Web-based database admin panel mounted at [/admin](http://localhost:8000/admin) _(requires `admin` group)_
+- **ShowAdmin**: Web-based database admin panel mounted at [/admin](http://localhost:8000/admin) _(requires `admin` extra)_
 - **ShowCmd**: A command-line interface to interact with the system with a CLI or TUI
 - **ShowComms**: A communication tool for crew members to coordinate during a performance, including messaging and cue notifications
 - **ShowDashboard**: Show selector and control dashboard mounted at [/](http://localhost:8000/)
