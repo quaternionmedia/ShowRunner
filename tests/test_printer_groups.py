@@ -13,6 +13,7 @@ from showrunner.plugins.printer import (  # noqa: E402
     _group_label,
     _load_layout,
     _minus,
+    _place_cues,
     _Row,
     generate_pdf,
 )
@@ -97,3 +98,21 @@ def test_minus_returns_the_parts_outside_another_interval():
     assert _minus(0, 10, 4, 6) == [(0, 4), (6, 10)]
     assert _minus(0, 10, -5, 5) == [(5, 10)]
     assert _minus(0, 10, 0, 10) == []
+
+
+def test_cue_badge_lands_on_its_own_row_of_a_multi_line_element():
+    # Regression: a Fountain element spans many lines; markers were drawn once per
+    # element, so a cue on a later row lost its badge.
+    from fpdf import FPDF
+    from types import SimpleNamespace
+
+    pdf = FPDF(unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_font('Helvetica', '', 10)
+    rows = [_Row(0, 'Line one', 10, 0, 10, 150), _Row(9, 'Line two', 10, 0, 10, 150)]
+    cue = SimpleNamespace(id=7)
+    _place_cues(pdf, rows, [(cue, 12)], lambda c: ('L1', (1, 2, 3), 6.0))
+    assert rows[0].cues == []
+    assert rows[1].cues == [cue]
+    assert rows[1].badges == [(3, 'L1', (1, 2, 3), 6.0)]
+    assert rows[1].cue_x[7] > rows[1].x

@@ -188,7 +188,11 @@ class _Row:
     width: float
     cell_x: float
     cell_w: float
-    cue_x: dict[int, float] = field(default_factory=dict)  # cue id -> x of its position
+    align: str = 'L'
+    cue_x: dict[int, float] = field(default_factory=dict)  # cue id -> left edge of its slot
+    cue_w: dict[int, float] = field(default_factory=dict)  # cue id -> width of its badge slot
+    badges: list[tuple[int, str, tuple[int, int, int], float]] = field(default_factory=list)
+    cues: list[Cue] = field(default_factory=list)  # cues whose position falls on this row
     gidx: int = 0  # index among all rows of the script
 
 
@@ -237,7 +241,7 @@ def _split_rows(pdf: FPDF, text: str, cell_x: float, cell_w: float, align: str) 
             x = cell_x + (cell_w - width) / 2
         else:
             x = cell_x + cm
-        rows.append(_Row(start, line, x, width, cell_x, cell_w))
+        rows.append(_Row(start, line, x, width, cell_x, cell_w, align))
     return rows
 
 
@@ -263,23 +267,83 @@ def _cue_char_offsets(
     return out
 
 
-def _place_cues(pdf: FPDF, rows: list[_Row], offsets: list[tuple[Cue, int]]) -> None:
-    """Set each cue's x on the row that holds its character offset."""
+def _place_cues(pdf: FPDF, rows: list[_Row], offsets: list[tuple[Cue, int]], badge_of) -> None:
+    """Give each cue a slot on the row that holds its character offset. A badge takes its
+    slot inline, pushing the text after it right; ``badge_of(cue)`` returns
+    ``(label, rgb, slot_width)`` or None for a cue with no badge."""
     if not rows:
         return
     starts = [row.start for row in rows]
+    placed: dict[int, list[tuple[int, Cue]]] = {}
     for cue, i in offsets:
-        row = rows[max(bisect_right(starts, i) - 1, 0)]
-        k = min(max(i - row.start, 0), len(row.text))
-        row.cue_x[cue.id] = row.x + pdf.get_string_width(row.text[:k])
+        ri = max(bisect_right(starts, i) - 1, 0)
+        k = min(max(i - rows[ri].start, 0), len(rows[ri].text))
+        placed.setdefault(ri, []).append((k, cue))
+    body = (pdf.font_family, pdf.font_style, pdf.font_size_pt)
+    for ri, items in placed.items():
+        row = rows[ri]
+        items.sort(key=lambda item: item[0])
+        badges = [(k, cue, badge_of(cue)) for k, cue in items]
+        total = sum(b[2] for _, _, b in badges if b)
+        row.x -= total * {'L': 0.0, 'C': 0.5, 'R': 1.0}.get(row.align, 0.0)
+        row.width += total
+        pdf.set_font(*body)  # badge_of sets its own font
+        acc = 0.0
+        for k, cue, b in badges:
+            x = row.x + pdf.get_string_width(row.text[:k]) + acc
+            row.cue_x[cue.id] = x
+            row.cues.append(cue)
+            if b:
+                row.cue_w[cue.id] = b[2]
+                row.badges.append((k, b[0], b[1], b[2]))
+                acc += b[2]
+    for row in rows:
+        row.badges.sort(key=lambda t: t[0])
+
+
+def _draw_row(
+    pdf: FPDF, row: _Row, y: float, h: float, font: tuple[str, str, float],
+    badge: tuple[str, str, float, float],
+) -> None:
+    """Print one row: its text with each badge inline at its cue's slot."""
+    x, pos = row.x, 0
+
+    def text(seg: str) -> None:
+        nonlocal x
+        if seg:
+            pdf.set_xy(x - pdf.c_margin, y)
+            pdf.cell(pdf.get_string_width(seg) + 2 * pdf.c_margin, h, seg)
+            x += pdf.get_string_width(seg)
+
+    pdf.set_font(*font)
+    pdf.set_text_color(0, 0, 0)
+    for k, label, rgb, w in row.badges:
+        text(row.text[pos:k])
+        pdf.set_font(badge[0], badge[1], badge[2])
+        bh = badge[3]
+        by = y + (h - bh) / 2
+        pdf.set_fill_color(*rgb)
+        pdf.set_text_color(255, 255, 255)
+        pdf.rect(x, by, w - 1, bh, style='F')
+        pdf.set_xy(x, by)
+        pdf.cell(w - 1, bh, label, align='C')
+        x += w
+        pos = k
+        pdf.set_font(*font)
+        pdf.set_text_color(0, 0, 0)
+    text(row.text[pos:])
 
 
 def _group_extent(row: _Row, member_ids: set[int], pad: float) -> tuple[float, float]:
     """A group's horizontal edges on one row: its member cues' span, or the full text
     width where the row has none (a line inside the group's run)."""
-    xs = [x for cue_id, x in row.cue_x.items() if cue_id in member_ids]
-    if xs:
-        left, right = min(xs), max(xs) + GROUP_CHIP_W
+    spans = [
+        (x, x + max(row.cue_w.get(cue_id, 0.0), GROUP_CHIP_W))
+        for cue_id, x in row.cue_x.items() if cue_id in member_ids
+    ]
+    if spans:
+        left = min(a for a, _ in spans)
+        right = max(b for _, b in spans)
     else:
         left, right = row.cell_x, row.cell_x + row.cell_w
     return left - pad, right + pad
@@ -444,6 +508,23 @@ def generate_pdf(
     _add_page()
 
     usable_width = pw - ml - mr
+    badge_font = _split_font(cue_font)
+    badge_h = cue_size * 0.352778 * 1.3
+    name_only = CuePrintOptions(
+        markers=False, names=options.names, notes=options.notes, previews=options.previews
+    )
+
+    def badge_of(cue: Cue):
+        """(label, rgb, slot width) for a cue's inline badge, or None when it has none."""
+        if not options.markers:
+            return None
+        layer = cue.layer or ''
+        label = _latin1(f'{layer[:1]}{cue_number_label(cue.number, cue.point, layer, _sr_ui._pm)}')
+        if not label:
+            return None
+        pdf.set_font(badge_font[0], badge_font[1], cue_size)
+        # The slot is the badge plus a 1 mm gap; _draw_row prints the badge 1 mm narrower.
+        return label, _cue_color(layout, layer, layer_colors), pdf.get_string_width(label) + 4
 
     # Pass 1: lay out every element's printed rows and where each cue sits on them. A
     # group box is then drawn row by row, from its first to its last member cue on each
@@ -465,7 +546,9 @@ def generate_pdf(
             if text.strip() else []
         )
         lines = elem_lines[idx]
-        _place_cues(pdf, rows, _cue_char_offsets(text, lines, cues_by_line, content_lines))
+        _place_cues(
+            pdf, rows, _cue_char_offsets(text, lines, cues_by_line, content_lines), badge_of
+        )
         all_rows.extend(rows)
         plans.append(_Plan(font_name, font_style, style, cell_x, cell_w, rows, lines))
     for gi, row in enumerate(all_rows):
@@ -526,8 +609,7 @@ def generate_pdf(
         space_before = style.get('space-before', 0)
         if space_before:
             pdf.set_y(pdf.get_y() + space_before * 0.352778)  # pt → mm
-        y_before = pdf.get_y()
-        page_before = pdf.page
+        empty_y = pdf.get_y()
         if not plan.rows:
             # Empty elements (e.g. a blank lyric line) only take up a line of space.
             pdf.set_y(pdf.get_y() + line_h)
@@ -548,8 +630,6 @@ def generate_pdf(
             if tops:
                 pdf.set_y(pdf.get_y() + GROUP_LABEL_H + max(_rise(g) for g in tops))
             row_top = pdf.get_y()
-            if i == 0:
-                y_before, page_before = row_top, pdf.page
             bottom = row_top + line_h
 
             ext: dict[int, tuple[float, float]] = {}
@@ -587,10 +667,20 @@ def generate_pdf(
             for g in sorted(tops, key=lambda g: ext[g['id']][0]):
                 label_x = _label(g, max(ext[g['id']][0], label_x), row_top - _rise(g) - 0.8)
 
-            pdf.set_font(font_name, font_style, font_size)
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_xy(row.x - pdf.c_margin, row_top)
-            pdf.cell(row.width + 2 * pdf.c_margin, line_h, row.text)
+            _draw_row(
+                pdf, row, row_top, line_h, (font_name, font_style, font_size),
+                (badge_font[0], badge_font[1], cue_size, badge_h),
+            )
+            if row.cues:
+                # Names sit in the margin beside their own row, so each one lines up with its cue.
+                saved_y = pdf.get_y()
+                pdf.set_auto_page_break(auto=False, margin=mb)
+                _draw_cue_annotations(
+                    pdf, row.cues, row_top, pw, cue_margin_right, cue_font, cue_size,
+                    cue_space, layout, layer_colors, name_only,
+                )
+                pdf.set_auto_page_break(auto=True, margin=mb)
+                pdf.set_y(saved_y)
 
             pdf.set_y(bottom)
             ending = [g for g in active if last[g['id']] == r]
@@ -607,31 +697,17 @@ def generate_pdf(
                         _draw_preview_chips(
                             pdf, c, previews[c.id], cell_x, cell_w, layout, layer_colors
                         )
-        y_after = pdf.get_y()
-
-        # Draw cue annotations for original lines covered by this element.
-        # They stay on the page the element ends on: an automatic page break here
-        # would start a page holding only markers. Y is saved and restored on that page.
-        saved_y = pdf.get_y()
-        annot_top = y_before if pdf.page == page_before else pdf.t_margin
-        pdf.set_auto_page_break(auto=False, margin=mb)
-        _draw_cue_annotations(
-            pdf,
-            plan.lines,
-            cues_by_line,
-            annot_top,
-            y_after,
-            pw,
-            cue_margin_right,
-            cue_font,
-            cue_size,
-            cue_space,
-            layout,
-            layer_colors,
-            options,
-        )
-        pdf.set_auto_page_break(auto=True, margin=mb)
-        pdf.set_y(saved_y)
+        if not plan.rows:
+            # No printed row to anchor on: the cues of these lines go beside the blank space.
+            empty_cues = [c for ln in plan.lines for c in cues_by_line.get(ln, [])]
+            saved_y = pdf.get_y()
+            pdf.set_auto_page_break(auto=False, margin=mb)
+            _draw_cue_annotations(
+                pdf, empty_cues, empty_y, pw, cue_margin_right, cue_font, cue_size,
+                cue_space, layout, layer_colors, options,
+            )
+            pdf.set_auto_page_break(auto=True, margin=mb)
+            pdf.set_y(saved_y)
 
         # Space after
         space_after = style.get('space-after', 0)
@@ -815,10 +891,8 @@ def _draw_preview_chips(
 
 def _draw_cue_annotations(
     pdf: FPDF,
-    lines_for_elem: list[int],
-    cues_by_line: dict[int, list[Cue]],
+    relevant: list[Cue],
     y_top: float,
-    y_bottom: float,
     page_width: float,
     margin_right: float,
     font: str,
@@ -828,14 +902,11 @@ def _draw_cue_annotations(
     layer_colors: dict[str, str],
     options: CuePrintOptions,
 ) -> None:
-    """Draw cue annotations in the right margin beside an element.
+    """Draw cue annotations in the right margin beside the rows of a cue's line.
 
     Each cue gets a box: its name and notes (left, notes in italics) and its
     badge (right). *options* decides which parts are drawn.
     """
-    relevant: list[Cue] = []
-    for ln in lines_for_elem:
-        relevant.extend(cues_by_line.get(ln, []))
     if not relevant or not (options.markers or options.names or options.notes):
         return
 
