@@ -8,7 +8,7 @@ with SQLite by default.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Integer, UniqueConstraint, cast, event, inspect, select
+from sqlalchemy import Index, Integer, UniqueConstraint, cast, event, inspect, select, text
 from sqlalchemy.orm import Session
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -97,8 +97,33 @@ class Layer(SQLModel, table=True):
     color: str = 'grey'  # Quasar colour name
     type: str = 'generic'
     sequence: int = Field(default=0)
+    prefix: str = ''  # QLab-style number prefix; letters only, '' is the show's one default layer
 
     show: Optional[Show] = Relationship(back_populates='layers')
+
+
+class CueGroup(SQLModel, table=True):
+    """A named box around cues in a cue list; groups nest via ``parent_id``.
+
+    ``external_id`` is the id in a connected system (e.g. a QLab uniqueID), set by plugins.
+    """
+
+    __tablename__ = 'cue_groups'
+
+    id: int | None = Field(default=None, primary_key=True)
+    cue_list_id: int = Field(foreign_key='cue_lists.id')
+    name: str = ''
+    color: str = 'grey'  # Quasar colour name
+    parent_id: int | None = Field(default=None, foreign_key='cue_groups.id')
+    external_id: str | None = None
+    layer: str | None = None  # layer name; numbers the group like a cue on that layer
+    number: str | None = None  # main number (e.g. "5"); None = unnumbered
+
+    # One numbered group per layer and number: QLab refuses a duplicate number, so a second is an error
+    __table_args__ = (
+        Index('ux_cue_groups_layer_number', 'cue_list_id', 'layer', 'number', unique=True,
+              sqlite_where=text('number IS NOT NULL AND layer IS NOT NULL')),
+    )
 
 
 class Cue(SQLModel, table=True):
@@ -124,6 +149,11 @@ class Cue(SQLModel, table=True):
     script_char: int | None = (
         None  # character offset within the line (None = start of line)
     )
+    group_id: int | None = Field(default=None, foreign_key='cue_groups.id')  # innermost group
+    # QLab link, set by the QLab plugin: the cue's uniqueID there, and the QLab number it had
+    # at the last sync (so a change on either side can be told apart)
+    external_id: str | None = None
+    external_number: str | None = None
     created_at: datetime = Field(default_factory=_utcnow)
 
     cue_list: Optional[CueList] = Relationship(back_populates='cues')

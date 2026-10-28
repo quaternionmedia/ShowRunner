@@ -1,4 +1,4 @@
-from showrunner.scriptformat import block_css, classify_lines, load_styles
+from showrunner.scriptformat import block_css, classify_lines, load_styles, outline
 
 SCRIPT = """# ACT ONE
 
@@ -48,3 +48,16 @@ def test_style_overrides_are_merged_and_unsafe_values_ignored():
     assert 'margin-left: 30%' in css and 'text-transform: uppercase' in css
     assert 'font-weight' not in css and 'red' not in css
     assert 'bogus' not in styles
+
+
+def test_outline_lists_sections_and_scene_headings():
+    lines = ['# ACT ONE', '', 'INT. THEATER - NIGHT', '', 'PHANTOMS', 'Hi.', '', '## Scene 2',
+             '', '.FLASHBACK', '', 'EXT. STREET - DAY [[Page 3]]']
+    items = outline(lines, classify_lines(lines))
+    assert items == [
+        {'line': 1, 'level': 1, 'text': 'ACT ONE'},
+        {'line': 3, 'level': 2, 'text': 'INT. THEATER - NIGHT'},
+        {'line': 8, 'level': 2, 'text': 'Scene 2'},
+        {'line': 10, 'level': 3, 'text': 'FLASHBACK'},
+        {'line': 12, 'level': 3, 'text': 'EXT. STREET - DAY'},
+    ]

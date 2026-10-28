@@ -38,4 +38,4 @@ Select a cue layer from the toolbar, and click anywhere on the script text to cr
 
 You can then edit the cue details, such as the name and notes.
 
-You can view and manage all cues in the from the admin panel at [/admin](http://localhost:8000/admin) (requires `admin` group to be installed).
+You can view and manage all cues in the from the admin panel at [/admin](http://localhost:8000/admin) (requires `admin` extra to be installed).

@@ -91,7 +91,7 @@ ShowComms            0.1.0      Crew communication, messaging, and cue notificat
 ShowCmd              0.1.0      CLI and TUI interface for ShowRunner
 ShowRecorder         0.1.0      Archive, annotate, and review rehearsals
 ShowDB               0.1.0      SQLite database backend for shows, cues, and logs
-ShowAdmin            0.1.0      SQLAdmin web interface (optional — requires admin group)
+ShowAdmin            0.1.0      SQLAdmin web interface (optional — requires admin extra)
 ShowDashboard        0.1.0      NiceGUI web dashboard for show control
 ```
 
@@ -243,7 +243,7 @@ curl -s http://localhost:8000/stopper/   | python -m json.tool
 # NiceGUI web pages (browser only)
 open http://localhost:8000/          # Dashboard
 open http://localhost:8000/script    # Script viewer
-open http://localhost:8000/admin     # Admin panel (requires: uv sync --group admin)
+open http://localhost:8000/admin     # Admin panel (requires: uv sync --extra admin)
 
 # FastAPI docs
 open http://localhost:8000/api

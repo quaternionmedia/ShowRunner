@@ -50,6 +50,10 @@ Edit `Script.content` in the admin panel (`/admin`) or through the database. Whe
 sr scripts list 1
 ```
 
+### Jump with the outline
+
+The **Outline** button in the viewer toolbar opens a drawer listing the script's sections and scene headings for the whole script, not just the current page. Sections (`#`, `##`, ...) are indented by their level, and scene headings (`INT.`, `EXT.`, ...) sit one level below the section above them. Click an entry to go to its line: the viewer switches to that page and scrolls the line into view. The drawer stays open while you browse. A script with no sections or scene headings shows "No sections or scene headings."
+
 ### Format the script viewer
 
 The `/script` viewer labels every line with a block type (using Fountain rules) and styles it:
