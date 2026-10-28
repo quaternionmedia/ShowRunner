@@ -98,13 +98,13 @@ def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
         ('Lights', ''), ('Sound', 's'), ('Q', 'Q'), ('Lights 2', 'Lights'), ('Sound FX 2', 'SoundFX')]
     con.close()
 
-    command.downgrade(cfg, '-1')  # the layer prefix goes first
+    command.downgrade(cfg, '-2')  # the group number index, then the layer prefix
     con = sqlite3.connect(path)
     assert 'prefix' not in {r[1] for r in con.execute('pragma table_info(layers)')}
     con.close()
 
     command.upgrade(cfg, 'head')
-    command.downgrade(cfg, '-2')  # then the cue QLab-link columns
+    command.downgrade(cfg, '-3')  # then the cue QLab-link columns
     con = sqlite3.connect(path)
     assert not {'external_id', 'external_number'} & {r[1] for r in con.execute('pragma table_info(cues)')}
     assert {'layer', 'number'} <= {r[1] for r in con.execute('pragma table_info(cue_groups)')}
@@ -121,3 +121,18 @@ def test_cue_groups_migration_keeps_cues_and_downgrades(tmp_path):
     assert con.execute("select name from sqlite_master where name = 'cue_groups'").fetchall() == []
     assert con.execute('select name from cues').fetchall() == [('a',)]
     con.close()
+
+
+def test_cue_group_number_is_unique_per_layer_and_cue_list(tmp_path):
+    db = ShowDatabase(tmp_path / 'uniq.db')
+    db.create_schema()
+    con = sqlite3.connect(tmp_path / 'uniq.db')
+    con.execute("insert into cue_groups (cue_list_id, name, color, layer, number) "
+                "values (1, 'A', 'grey', 'Q', '5')")
+    con.execute("insert into cue_groups (cue_list_id, name, color, layer, number) "
+                "values (1, 'B', 'grey', NULL, NULL)")  # unnumbered groups may repeat
+    con.execute("insert into cue_groups (cue_list_id, name, color, layer, number) "
+                "values (1, 'C', 'grey', NULL, NULL)")
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute("insert into cue_groups (cue_list_id, name, color, layer, number) "
+                    "values (1, 'D', 'grey', 'Q', '5')")

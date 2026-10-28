@@ -8,7 +8,7 @@ with SQLite by default.
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Integer, UniqueConstraint, cast, event, inspect, select
+from sqlalchemy import Index, Integer, UniqueConstraint, cast, event, inspect, select, text
 from sqlalchemy.orm import Session
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -118,6 +118,12 @@ class CueGroup(SQLModel, table=True):
     external_id: str | None = None
     layer: str | None = None  # layer name; numbers the group like a cue on that layer
     number: str | None = None  # main number (e.g. "5"); None = unnumbered
+
+    # One numbered group per layer and number: QLab refuses a duplicate number, so a second is an error
+    __table_args__ = (
+        Index('ux_cue_groups_layer_number', 'cue_list_id', 'layer', 'number', unique=True,
+              sqlite_where=text('number IS NOT NULL AND layer IS NOT NULL')),
+    )
 
 
 class Cue(SQLModel, table=True):
