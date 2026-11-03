@@ -28,6 +28,7 @@ from showrunner.layers import (
 )
 from showrunner.models import Cue, CueList, Layer, Script
 from showrunner.plugins.db import get_db
+from showrunner.renumber import renumber_cues
 from showrunner.scriptformat import DEFAULT_LINE_HEIGHT, block_css, classify_lines, load_styles
 from showrunner.ui import _current_script_id, _current_show_id, header
 
@@ -170,6 +171,23 @@ def _load_cues(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
             for c in cues
         ]
 
+def _cue_state(cue: Cue) -> dict:
+    """The restorable fields of a cue, as the undo stack and plugin hooks see them."""
+    return {
+        'cue_list_id': cue.cue_list_id,
+        'number': cue.number,
+        'point': cue.point,
+        'name': cue.name,
+        'layer': cue.layer,
+        'cue_type': cue.cue_type,
+        'notes': cue.notes,
+        'color': cue.color,
+        'sequence': cue.sequence,
+        'script_line': cue.script_line,
+        'script_char': cue.script_char,
+    }
+
+
 def _get_or_create_cuelist(show_id: int) -> int:
     """Return the id of the first cue list for the show, creating one if needed."""
     with get_db().session() as s:
@@ -297,19 +315,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 cue = s.get(Cue, cue_id)
                 if cue is None:
                     return None
-                return {
-                    'cue_list_id': cue.cue_list_id,
-                    'number': cue.number,
-                    'point': cue.point,
-                    'name': cue.name,
-                    'layer': cue.layer,
-                    'cue_type': cue.cue_type,
-                    'notes': cue.notes,
-                    'color': cue.color,
-                    'sequence': cue.sequence,
-                    'script_line': cue.script_line,
-                    'script_char': cue.script_char,
-                }
+                return _cue_state(cue)
 
         def _notify_cue(action: str, cue_id: int, old: dict | None = None) -> None:
             """Tell plugins a cue was created, updated or deleted (see showrunner_cue_changed)."""
@@ -1121,6 +1127,139 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             _draw()
             dlg.open()
 
+        def _renumber_list_ids(show_id: int) -> list[int]:
+            """Cue lists a renumber applies to: the list being viewed, or all of them when showing all."""
+            cl_id, all_lists = _cue_scope(show_id)
+            if not all_lists:
+                return [cl_id]
+            with get_db().session() as s:
+                return list(s.exec(select(CueList.id).where(CueList.show_id == show_id)).all())
+
+        def _run_renumber(
+            layer: str,
+            cue_range: tuple[int, int],
+            start: int | None,
+            increment: int,
+            include_unnumbered: bool,
+            apply: bool,
+        ) -> list[tuple[int, str, str, dict]]:
+            """Renumber cues on *layer* in the show's scope.
+
+            Returns ``(cue_id, old_label, new_label, state_before)`` per changed cue. Everything
+            runs in one session, so an error in any list changes nothing; the session is only
+            committed when *apply* is true.
+            """
+            show_id = selected_show_id['v']
+            list_ids = _renumber_list_ids(show_id)
+            changes = []
+            with get_db().session() as s:
+                for cl_id in list_ids:
+                    before = {
+                        c.id: _cue_state(c)
+                        for c in s.exec(
+                            select(Cue).where(Cue.cue_list_id == cl_id, Cue.layer == layer)
+                        ).all()
+                    }
+                    for cid, old, new in renumber_cues(
+                        s,
+                        cl_id,
+                        layer,
+                        cue_range,
+                        start=start,
+                        increment=increment,
+                        include_unnumbered=include_unnumbered,
+                    ):
+                        changes.append((cid, old, new, before[cid]))
+                if apply:
+                    s.commit()
+            return changes
+
+        def open_renumber_dialog():
+            """Dialog to renumber a range of cues on one layer, with a preview before applying."""
+            show_id = selected_show_id['v']
+            if show_id is None:
+                ui.notify('Select a show first.', type='warning')
+                return
+            layer_names = list(layers_by_name['v'])
+            if not layer_names:
+                ui.notify('Add a layer first (Layers button).', type='warning')
+                return
+
+            def _read(apply: bool):
+                """Run the renumber with the dialog's inputs; ValueError goes to the caller."""
+                if from_in.value is None or to_in.value is None:
+                    raise ValueError('Enter the first and last cue number of the range.')
+                start = None if start_in.value is None else int(start_in.value)
+                return _run_renumber(
+                    layer_in.value,
+                    (int(from_in.value), int(to_in.value)),
+                    start,
+                    int(inc_in.value or 1),
+                    unnumbered_in.value,
+                    apply,
+                )
+
+            def _preview():
+                preview_box.clear()
+                try:
+                    changes = _read(apply=False)
+                except ValueError as exc:
+                    with preview_box:
+                        ui.label(str(exc)).classes('text-negative')
+                    return
+                with preview_box:
+                    if not changes:
+                        ui.label('No cues in that range.')
+                        return
+                    ui.label(f'{len(changes)} cues will change:')
+                    with ui.scroll_area().style('height: 240px'):
+                        for _, old, new, _before in changes:
+                            ui.label(f'{old or "(unnumbered)"} → {new}')
+
+            def _apply():
+                try:
+                    changes = _read(apply=True)
+                except ValueError as exc:
+                    ui.notify(str(exc), type='negative')
+                    return
+                dlg.close()
+                if not changes:
+                    ui.notify('No cues in that range.', type='warning')
+                    return
+                layer = layer_in.value
+                for cid, _old, _new, before in changes:
+                    _notify_cue('update', cid, before)
+
+                def _restore(items=[(cid, before) for cid, _, _, before in changes]):
+                    for cid, before in items:
+                        _update_cue(cid, False, number=before['number'])
+
+                _push_undo(f'Renumber {layer} ({len(changes)} cues)', _restore)
+                ui.notify(f'Renumbered {len(changes)} cues')
+                refresh_all()
+
+            dlg = ui.dialog()
+            with dlg, ui.card().style('min-width: 480px'):
+                ui.label('Renumber cues').classes('text-h6')
+                layer_in = ui.select(layer_names, value=selected_layer['v'], label='Layer').classes('w-full')
+                with ui.row().classes('w-full items-end gap-2'):
+                    from_in = ui.number('From', precision=0).classes('flex-1')
+                    to_in = ui.number('To', precision=0).classes('flex-1')
+                with ui.row().classes('w-full items-end gap-2'):
+                    start_in = ui.number('Start at (blank = first in range)', precision=0).classes('flex-1')
+                    inc_in = ui.number('Increment', value=1, min=1, precision=0).classes('flex-1')
+                unnumbered_in = ui.checkbox('Include unnumbered cues').tooltip(
+                    'Number unnumbered cues whose script position falls within the range, '
+                    'in script order. Cues with no script position are skipped.'
+                )
+                ui.separator()
+                preview_box = ui.column().classes('w-full gap-1')
+                with ui.row().classes('w-full justify-end gap-2'):
+                    ui.button('Cancel', on_click=dlg.close).props('flat')
+                    ui.button('Preview', on_click=_preview).props('outline')
+                    ui.button('Apply', on_click=_apply).props('unelevated')
+            dlg.open()
+
         def set_layer(layer: str):
             selected_layer['v'] = layer
             render_toolbar()
@@ -1158,6 +1297,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         color=info['color'],
                     ).props('dense unelevated' if is_active else 'dense outline')
                 ui.button('Layers', icon='tune', on_click=open_layers_dialog).props('flat dense')
+                ui.button('Renumber', icon='format_list_numbered', on_click=open_renumber_dialog).props('flat dense')
                 show_id = selected_show_id['v']
                 if show_id is not None:
                     scope_id, all_lists = _cue_scope(show_id)
