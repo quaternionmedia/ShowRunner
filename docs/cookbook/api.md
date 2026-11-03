@@ -52,18 +52,18 @@ The NiceGUI-powered pages are browser-only (not REST):
 | ---------------------------- | ------------- | ------------------------------------------------ |
 | http://localhost:8000/       | ShowDashboard | Show selector and control dashboard              |
 | http://localhost:8000/script | ShowScripter  | Script viewer with drag-and-drop cue placement   |
-| http://localhost:8000/admin  | ShowAdmin     | SQLAdmin CRUD interface _(requires admin group)_ |
+| http://localhost:8000/admin  | ShowAdmin     | SQLAdmin CRUD interface _(requires admin extra)_ |
 
 ---
 
 ## Admin Panel
 
-The admin panel requires the optional `admin` dependency group:
+The admin panel requires the optional `admin` extra:
 
 ```bash
-uv sync --group admin
+uv sync --extra admin
 sr start
 # Then open http://localhost:8000/admin
 ```
 
-The admin panel provides full CRUD for Shows, Scripts, CueLists, Cues, Actors, CueLogs, and Config.
+The admin panel provides full CRUD for Shows, Scripts, Cue Lists, Cues, Cue Groups, Layers, Actors, Cue Logs, and Config.

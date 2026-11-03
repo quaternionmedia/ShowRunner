@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover
     HAS_SQLADMIN = False
 
 import showrunner
-from showrunner.models import Actor, Config, Cue, CueList, CueLog, Layer, Script, Show
+from showrunner.models import Actor, Config, Cue, CueGroup, CueList, CueLog, Layer, Script, Show
 
 # ---------------------------------------------------------------------------
 # ModelAdmin views (only defined when sqladmin is available)
@@ -89,6 +89,9 @@ if HAS_SQLADMIN:
             Cue.notes,
             Cue.script_line,
             Cue.script_char,
+            Cue.group_id,
+            Cue.external_id,
+            Cue.external_number,
             Cue.created_at,
         ]
         column_searchable_list = [Cue.name, Cue.layer]
@@ -97,6 +100,23 @@ if HAS_SQLADMIN:
         name = 'Cue'
         name_plural = 'Cues'
         icon = 'fa-solid fa-lightbulb'
+
+    class CueGroupAdmin(ModelView, model=CueGroup):
+        column_list = [
+            CueGroup.id,
+            CueGroup.cue_list_id,
+            CueGroup.name,
+            CueGroup.color,
+            CueGroup.layer,
+            CueGroup.number,
+            CueGroup.parent_id,
+            CueGroup.external_id,
+        ]
+        column_searchable_list = [CueGroup.name, CueGroup.layer]
+        column_sortable_list = [CueGroup.id, CueGroup.name, CueGroup.number]
+        name = 'Cue Group'
+        name_plural = 'Cue Groups'
+        icon = 'fa-solid fa-object-group'
 
     class ActorAdmin(ModelView, model=Actor):
         column_list = [
@@ -137,7 +157,15 @@ if HAS_SQLADMIN:
         icon = 'fa-solid fa-gear'
 
     class LayerAdmin(ModelView, model=Layer):
-        column_list = [Layer.id, Layer.show_id, Layer.name, Layer.color, Layer.type, Layer.sequence]
+        column_list = [
+            Layer.id,
+            Layer.show_id,
+            Layer.name,
+            Layer.color,
+            Layer.type,
+            Layer.sequence,
+            Layer.prefix,
+        ]
         column_searchable_list = [Layer.name]
         column_sortable_list = [Layer.id, Layer.name, Layer.sequence]
         name = 'Layer'
@@ -149,6 +177,7 @@ if HAS_SQLADMIN:
         ScriptAdmin,
         CueListAdmin,
         CueAdmin,
+        CueGroupAdmin,
         LayerAdmin,
         ActorAdmin,
         CueLogAdmin,

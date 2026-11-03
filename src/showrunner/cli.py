@@ -787,6 +787,9 @@ def layers_add(
     name: str = Argument(..., help="Layer name, unique within the show"),
     type_: str = Option("generic", "--type", "-t", help="Layer type (see `sr layers types`)"),
     color: str = Option("grey", "--color", "-c", help="Quasar colour name, e.g. orange"),
+    prefix: Optional[str] = Option(
+        None, "--prefix", "-p", help="Letters before cue numbers (default: from the name)"
+    ),
     show_id: Optional[int] = Option(
         None, "--show", "-s", help="ID of the show (default: current-show from config)"
     ),
@@ -796,7 +799,7 @@ def layers_add(
     db = _db()
     try:
         with db.session() as session:
-            layer = add_layer(session, show_id, name, type_, color, _pm())
+            layer = add_layer(session, show_id, name, type_, color, _pm(), prefix=prefix)
             console.print(
                 f'[green]Added[/green] layer [bold]"{layer.name}"[/bold] '
                 f"({layer.type}, {layer.color})"
@@ -814,15 +817,18 @@ def layers_set(
     new_name: Optional[str] = Option(None, "--name", "-n", help="Rename; cues follow"),
     type_: Optional[str] = Option(None, "--type", "-t", help="New layer type"),
     color: Optional[str] = Option(None, "--color", "-c", help="New Quasar colour name"),
+    prefix: Optional[str] = Option(
+        None, "--prefix", "-p", help="New prefix; '' makes this the one default layer"
+    ),
     show_id: Optional[int] = Option(
         None, "--show", "-s", help="ID of the show (default: current-show from config)"
     ),
 ):
-    """Change a layer's name, type or colour."""
-    changes = {"name": new_name, "type": type_, "color": color}
+    """Change a layer's name, type, colour or prefix."""
+    changes = {"name": new_name, "type": type_, "color": color, "prefix": prefix}
     changes = {k: v for k, v in changes.items() if v is not None}
     if not changes:
-        console.print("[red]Nothing to change: pass --name, --type or --color.[/red]")
+        console.print("[red]Nothing to change: pass --name, --type, --color or --prefix.[/red]")
         raise typer.Exit(1)
     show_id = _show_id(show_id)
     db = _db()

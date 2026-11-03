@@ -141,16 +141,18 @@ async def list_layers(show_id: int):
 
 
 @router.post('/shows/{show_id}/layers')
-async def create_layer(show_id: int, name: str, type: str, color: str = 'grey'):
-    """Add a layer to a show. Unknown type or colour, or a duplicate name, is a 422."""
+async def create_layer(show_id: int, name: str, type: str, color: str = 'grey',
+                       prefix: str | None = None):
+    """Add a layer to a show. Unknown type or colour, a duplicate name or a taken prefix is a 422."""
     with _db.session() as s:
         if s.get(Show, show_id) is None:
             raise HTTPException(status_code=404, detail='Show not found')
         try:
-            layer = add_layer(s, show_id, name, type, color, _pm)
+            layer = add_layer(s, show_id, name, type, color, _pm, prefix=prefix)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color}
+        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color,
+                'prefix': layer.prefix}
 
 
 @router.put('/layers/{layer_id}')
@@ -160,10 +162,11 @@ async def change_layer(
     type: str | None = None,
     color: str | None = None,
     sequence: int | None = None,
+    prefix: str | None = None,
 ):
     """Change a layer. A rename also renames the cues that use it."""
-    changes = {k: v for k, v in dict(name=name, type=type, color=color, sequence=sequence).items()
-               if v is not None}
+    changes = {k: v for k, v in dict(name=name, type=type, color=color, sequence=sequence,
+                                     prefix=prefix).items() if v is not None}
     with _db.session() as s:
         layer = s.get(Layer, layer_id)
         if layer is None:
@@ -172,7 +175,8 @@ async def change_layer(
             layer = update_layer(s, layer, _pm, **changes)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
-        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color}
+        return {'id': layer.id, 'name': layer.name, 'type': layer.type, 'color': layer.color,
+                'prefix': layer.prefix}
 
 
 @router.delete('/layers/{layer_id}')

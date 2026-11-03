@@ -163,6 +163,17 @@ class ShowRunnerSpec:
         """
 
     @hookspec
+    def showrunner_group_changed(self, action, group, before) -> str | None:
+        """Called after a cue group is created, updated, deleted, or its members change.
+
+        ``action`` is 'create', 'update', 'members' or 'delete'. ``group`` is the group's
+        dict (id, name, color, parent_id, external_id, cue_ids): its new state, or for
+        'delete' the state before removal. ``before`` is the state before an update or
+        members change, otherwise None. Return a message if the plugin could not do what
+        was asked; the viewer shows it.
+        """
+
+    @hookspec
     def showrunner_script_previews(self, cues: list[dict]) -> dict[int, list[dict]] | None:
         """Return preview chips for cues shown in the script viewer.
 

@@ -4,6 +4,7 @@ Provides a NiceGUI page at ``/script`` for viewing scripts and placing cues
 onto specific lines within the script text.
 """
 
+import json
 import re
 from collections import deque
 from html import escape as _escape
@@ -16,9 +17,19 @@ from sqlmodel import select
 
 import showrunner
 from showrunner import ui as _sr_ui
-from showrunner.layers import cue_number_label
+from showrunner.groups import (
+    container_for,
+    create_group,
+    delete_group,
+    group_depths,
+    group_tree,
+    next_number,
+    set_members,
+    update_group,
+)
 from showrunner.layers import (
     add_layer,
+    cue_number_label,
     delete_layer,
     get_layer_types,
     get_layers,
@@ -26,10 +37,16 @@ from showrunner.layers import (
     is_color,
     update_layer,
 )
-from showrunner.models import Cue, CueList, Layer, Script
+from showrunner.models import Cue, CueGroup, CueList, Layer, Script
 from showrunner.plugins.db import get_db
 from showrunner.renumber import renumber_cues
-from showrunner.scriptformat import DEFAULT_LINE_HEIGHT, block_css, classify_lines, load_styles
+from showrunner.scriptformat import (
+    DEFAULT_LINE_HEIGHT,
+    block_css,
+    classify_lines,
+    load_styles,
+    outline,
+)
 from showrunner.ui import _current_script_id, _current_show_id, header
 
 ALL_LISTS = 0  # cue-list filter value meaning "every cue list in the show"
@@ -37,6 +54,114 @@ ALL_LISTS = 0  # cue-list filter value meaning "every cue list in the show"
 PAGE_SIZE = 100
 PAGE_BREAK_RE = re.compile(r'\[\[Page\s+(.+?)\]\]')
 DEFAULT_UNDO_LEVELS = 50
+GROUP_COLOURS = ['grey', 'red', 'orange', 'amber', 'yellow', 'lime', 'green', 'teal', 'cyan', 'blue', 'indigo', 'purple', 'pink']
+
+
+def _group_colour(colour) -> str:
+    """A colour the group picker offers; anything else (e.g. QLab's 'none') shows as grey."""
+    return colour if colour in GROUP_COLOURS else 'grey'
+
+# Draws group boxes around the chips of each group (window.srDrawGroups) and the rubber-band
+# selection in group mode (window.srGroupMode). Chips carry data-cue-id; the host is #sr-script-host.
+_GROUP_JS = """
+<script>
+window.srDrawGroups = (groups, tries = 0) => {
+  const ov = document.getElementById('sr-group-overlay');
+  if (!ov) { if (tries < 20) setTimeout(() => window.srDrawGroups(groups, tries + 1), 50); return; }
+  window.srLast = groups;
+  ov.innerHTML = '';
+  const host = ov.parentElement, base = ov.getBoundingClientRect();
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('width', base.width);
+  svg.setAttribute('height', base.height);
+  svg.style.cssText = 'position:absolute;left:0;top:0;overflow:visible;';
+  ov.appendChild(svg);
+  const allLines = [...host.querySelectorAll('[data-line]')];
+  for (const g of groups) {
+    const chips = g.cue_ids.map(id => host.querySelector(`[data-cue-id="${id}"]`)).filter(Boolean);
+    const memberLines = new Set(chips.map(el => el.closest('[data-line]')).filter(Boolean));
+    if (!memberLines.size) continue;
+    // One row per line from the group's first to its last member line. A row spans only the
+    // member cues on that line, so other cues on the same line stay outside the box.
+    const idx = allLines.map((el, i) => memberLines.has(el) ? i : -1).filter(i => i >= 0);
+    const span = allLines.slice(Math.min(...idx), Math.max(...idx) + 1);
+    const pad = 4 + g.nest * 4;
+    const raw = span.map(el => {
+      const r = el.getBoundingClientRect();
+      const mine = chips.filter(c => el.contains(c)).map(c => c.getBoundingClientRect());
+      return {
+        l: (mine.length ? Math.min(...mine.map(m => m.left)) : r.left) - base.left,
+        r: (mine.length ? Math.max(...mine.map(m => m.right)) : r.right) - base.left,
+        t: Math.min(r.top, ...mine.map(m => m.top)) - base.top,
+        b: r.bottom - base.top,
+      };
+    });
+    const n = raw.length;
+    // Row edges meet halfway between lines, so the rows form one continuous outline
+    const edge = [raw[0].t - pad - 10];
+    for (let i = 1; i < n; i++) edge.push((raw[i - 1].b + raw[i].t) / 2);
+    edge.push(raw[n - 1].b + pad);
+    const rows = raw.map((r, i) => ({l: r.l - pad, r: r.r + pad, t: edge[i], b: edge[i + 1]}));
+    const pts = [];
+    rows.forEach(r => pts.push([r.r, r.t], [r.r, r.b]));
+    rows.slice().reverse().forEach(r => pts.push([r.l, r.b], [r.l, r.t]));
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', 'M' + pts.map(p => p.join(',')).join(' L') + ' Z');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '2');
+    path.setAttribute('class', `text-${g.color}`);
+    svg.appendChild(path);
+    const label = document.createElement('div');
+    label.textContent = g.name;
+    label.style.cssText = `position:absolute;left:${rows[0].l + 8}px;top:${edge[0]}px;transform:translateY(-100%);padding:0 4px;background:#121212;font-size:0.7rem;white-space:nowrap;pointer-events:auto;cursor:pointer;z-index:2;color:inherit;`;
+    label.className = `text-${g.color}`;
+    label.addEventListener('click', () => ov.dispatchEvent(new CustomEvent('srgroup', {detail: g.id})));
+    ov.appendChild(label);
+  }
+  if (!window.srResizeHooked) {
+    window.srResizeHooked = true;
+    window.addEventListener('resize', () => window.srLast && window.srDrawGroups(window.srLast));
+  }
+};
+window.srGroupMode = (on, hostId) => {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  host._srGroupOn = on;
+  host.style.cursor = on ? 'crosshair' : '';
+  if (host._srHooked) return;
+  host._srHooked = true;
+  host.addEventListener('mousedown', (e) => {
+    if (!host._srGroupOn || e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, y0 = e.clientY;
+    const sel = document.createElement('div');
+    sel.style.cssText = 'position:fixed;border:1px dashed #fff;background:rgba(255,255,255,0.08);pointer-events:none;z-index:9999;';
+    document.body.appendChild(sel);
+    const move = (ev) => {
+      sel.style.left = Math.min(x0, ev.clientX) + 'px'; sel.style.top = Math.min(y0, ev.clientY) + 'px';
+      sel.style.width = Math.abs(ev.clientX - x0) + 'px'; sel.style.height = Math.abs(ev.clientY - y0) + 'px';
+    };
+    const up = (ev) => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      sel.remove();
+      const L = Math.min(x0, ev.clientX), R = Math.max(x0, ev.clientX);
+      const T = Math.min(y0, ev.clientY), B = Math.max(y0, ev.clientY);
+      if (R - L < 4 && B - T < 4) return;
+      const ids = [...host.querySelectorAll('[data-cue-id]')].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.right >= L && r.left <= R && r.bottom >= T && r.top <= B;
+      }).map((el) => Number(el.dataset.cueId));
+      if (ids.length) host.dispatchEvent(new CustomEvent('srselect', {detail: [...new Set(ids)]}));
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+};
+</script>
+"""
 
 
 def _parse_pages(lines: list[str]) -> list[dict]:
@@ -167,9 +292,46 @@ def _load_cues(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
                 'layer': c.layer,
                 'script_line': c.script_line,
                 'script_char': c.script_char,
+                'group_id': c.group_id,
             }
             for c in cues
         ]
+
+def _load_groups(cue_list_id: int | None, all_lists: bool = False) -> list[dict]:
+    """Groups of the cue list in scope (every list in the show when *all_lists*), from group_tree."""
+    if cue_list_id is None:
+        return []
+    with get_db().session() as s:
+        cl = s.get(CueList, cue_list_id)
+        if cl is None:
+            return []
+        ids = (
+            s.exec(select(CueList.id).where(CueList.show_id == cl.show_id)).all()
+            if all_lists
+            else [cue_list_id]
+        )
+        return [g for lid in ids for g in group_tree(s, lid)]
+
+
+def _group_dict(session, g: CueGroup) -> dict:
+    """A group's state as plugin hooks see it: its own cue ids (not its descendants')."""
+    return {
+        'id': g.id,
+        'name': g.name,
+        'color': g.color,
+        'parent_id': g.parent_id,
+        'external_id': g.external_id,
+        'layer': g.layer,
+        'number': g.number,
+        'cue_ids': list(session.exec(select(Cue.id).where(Cue.group_id == g.id))),
+    }
+
+
+def _group_snapshot(group_id: int) -> dict | None:
+    with get_db().session() as s:
+        g = s.get(CueGroup, group_id)
+        return None if g is None else _group_dict(s, g)
+
 
 def _cue_state(cue: Cue) -> dict:
     """The restorable fields of a cue, as the undo stack and plugin hooks see them."""
@@ -185,6 +347,8 @@ def _cue_state(cue: Cue) -> dict:
         'sequence': cue.sequence,
         'script_line': cue.script_line,
         'script_char': cue.script_char,
+        'external_id': cue.external_id,
+        'external_number': cue.external_number,
     }
 
 
@@ -217,6 +381,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
     def script_page():
         ui.dark_mode(True)
         header()
+        ui.add_body_html(_GROUP_JS)
 
         # ---- state ----------------------------------------------------------
         selected_show_id: dict = {'v': _current_show_id()}
@@ -237,6 +402,9 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         # per-browser (server-side user storage), restored on page load
         show_details: dict = {'v': bool(nicegui_app.storage.user.get('show_details', False))}
 
+        # new groups pre-fill the next free number on their layer (per-browser, like the others)
+        auto_number: dict = {'v': bool(nicegui_app.storage.user.get('auto_number_groups', False))}
+
         # toggle for plugin preview chips
         show_previews: dict = {
             'v': bool(nicegui_app.storage.user.get('show_previews', cfg.get('show-previews', True)))
@@ -244,6 +412,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
         # toggle for click-to-add-cue mode
         cue_mode: dict = {'v': False}
+        group_mode: dict = {'v': False}  # rubber-band selection draws a new group
 
         # refs to dynamic containers
         script_select_ref: dict = {'el': None}
@@ -253,6 +422,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
         scroll_ref: dict = {'el': None}
         unpositioned_ref: dict = {'el': None}
         toolbar_ref: dict = {'el': None}
+        toc_ref: dict = {'el': None}
 
         # ---- helpers --------------------------------------------------------
         def _load_scripts():
@@ -331,6 +501,160 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 if msg:
                     ui.notify(f'TheatreMix not updated: {msg}', type='warning')
 
+        def _notify_group(action: str, group: dict | None, before: dict | None = None) -> None:
+            """Tell plugins a group changed (see showrunner_group_changed)."""
+            if group is None:
+                return
+            for msg in hook_results(_sr_ui._pm, 'showrunner_group_changed', action=action, group=group, before=before):
+                if msg:
+                    ui.notify(f'Plugin did not update group: {msg}', type='warning')
+
+        def _single_list(cue_ids: list[int]) -> int | None:
+            """The cue list all *cue_ids* belong to, or None (with a notice) when they span lists."""
+            with get_db().session() as s:
+                lists = set(s.exec(select(Cue.cue_list_id).where(Cue.id.in_(cue_ids))))
+            if len(lists) != 1:
+                ui.notify('Select cues from one cue list.', type='warning')
+                return None
+            return lists.pop()
+
+        def _create_group(cl_id: int, cue_ids: list[int], name: str, color: str, layer=None, number=None) -> None:
+            """New group around *cue_ids*, nested in the smallest existing group that already holds them all."""
+            with get_db().session() as s:
+                parent = container_for(s, cl_id, cue_ids)
+                gid = create_group(s, cl_id, cue_ids, name=name, color=color, parent_id=parent,
+                                   layer=layer, number=number).id
+                s.commit()
+            _notify_group('create', _group_snapshot(gid))
+            refresh_all()
+
+        def _update_group(group_id: int, **fields) -> None:
+            """Change a group's name, colour, layer or number (ValueError if the number is taken)."""
+            before = _group_snapshot(group_id)
+            with get_db().session() as s:
+                update_group(s, group_id, **fields)
+                s.commit()
+            _notify_group('update', _group_snapshot(group_id), before)
+            refresh_all()
+
+        def _delete_group(group_id: int) -> None:
+            """Remove a group. Its cues stay in the list, in the enclosing group if there is one."""
+            before = _group_snapshot(group_id)
+            with get_db().session() as s:
+                delete_group(s, group_id)
+                s.commit()
+            _notify_group('delete', before)
+            refresh_all()
+
+        def _set_group_members(gid: int, cue_ids: list[int]) -> None:
+            """Make *cue_ids* the group's own cues; the ones it drops move to the enclosing group."""
+            before = _group_snapshot(gid)
+            with get_db().session() as s:
+                set_members(s, gid, cue_ids)
+                s.commit()
+            _notify_group('members', _group_snapshot(gid), before)
+            refresh_all()
+
+        def _remove_from_group(cue_id: int) -> None:
+            with get_db().session() as s:
+                cue = s.get(Cue, cue_id)
+                gid = cue.group_id if cue else None
+            before = _group_snapshot(gid) if gid is not None else None
+            if before is None:
+                return
+            _set_group_members(gid, [c for c in before['cue_ids'] if c != cue_id])
+
+        def open_group_dialog(group: dict | None, cue_ids: list[int] | None = None, cl_id: int | None = None) -> None:
+            """Name and colour for a new group (*cue_ids* and *cl_id*) or an existing one (*group*)."""
+            dlg = ui.dialog()
+            with dlg, ui.card().classes('p-3 gap-2').style('min-width: 300px'):
+                ui.label('Edit group' if group else 'New group').classes('text-subtitle2 font-bold')
+                name_in = ui.input(label='Name', value=(group or {}).get('name', '')).classes('w-full')
+                colour_in = ui.select(
+                    GROUP_COLOURS, value=_group_colour((group or {}).get('color')), label='Colour'
+                ).classes('w-full')
+                # A new group takes the layer its cues share, numbered like a cue on that layer
+                # A new group takes the active layer; with auto-number on, its number is pre-filled
+                layer_default = (group or {}).get('layer')
+                if group is None:
+                    layer_default = selected_layer['v'] if selected_layer['v'] in layers_by_name['v'] else None
+
+                def _suggest(layer_name: str | None) -> str:
+                    if group is not None or cl_id is None or not cue_ids or not layer_name:
+                        return ''
+                    if not auto_number['v']:
+                        return ''
+                    with get_db().session() as s:
+                        return next_number(s, cl_id, layer_name, cue_ids)
+
+                with ui.row().classes('w-full items-end gap-2'):
+                    layer_in = ui.select(list(layers_by_name['v']), value=layer_default, label='Layer',
+                                         clearable=True).classes('flex-1')
+                    number_in = ui.input(label='Number', value=(group or {}).get('number') or _suggest(layer_default)).classes('flex-1')
+                    if group is None:
+                        layer_in.on_value_change(
+                            lambda e: number_in.set_value(_suggest(e.value)) if auto_number['v'] else None
+                        )
+                # Unticking a cue unlinks it from this group on Save
+                member_checks: dict[int, ui.checkbox] = {}
+                if group and group['cue_ids']:
+                    ui.label('Cues in this group').classes('text-caption text-grey mt-2')
+                    with get_db().session() as s:
+                        members = s.exec(
+                            select(Cue).where(Cue.id.in_(group['cue_ids']))
+                            .order_by(Cue.script_line, Cue.script_char)
+                        ).all()
+                        rows = [(c.id, c.layer or '', _cue_number_label({'number': c.number, 'point': c.point,
+                                                                       'layer': c.layer}), c.name or '')
+                                for c in members]
+                    for cid, layer, number, name in rows:
+                        text = ' '.join(part for part in (layer, number, name) if part)
+                        member_checks[cid] = ui.checkbox(text, value=True)
+
+                def _save(_):
+                    name, colour = name_in.value.strip(), colour_in.value
+                    layer, number = layer_in.value or None, (number_in.value or '').strip() or None
+                    try:
+                        if group:
+                            keep = [cid for cid, box in member_checks.items() if box.value]
+                            _update_group(group['id'], name=name, color=colour, layer=layer, number=number)
+                            if len(keep) != len(member_checks):
+                                _set_group_members(group['id'], keep)
+                        else:
+                            _create_group(cl_id, cue_ids, name, colour, layer, number)
+                    except ValueError as exc:
+                        ui.notify(str(exc), type='negative')
+                        return
+                    dlg.close()
+
+                with ui.row().classes('w-full justify-between items-center mt-2'):
+                    if group:
+                        ui.button('Delete group', color='red', on_click=lambda _: (_delete_group(group['id']), dlg.close())).props('flat dense').tooltip('Cues stay in the list')
+                    else:
+                        ui.label('')
+                    with ui.row():
+                        ui.button('Cancel', on_click=dlg.close).props('flat')
+                        ui.button('Save' if group else 'Create', on_click=_save)
+            dlg.open()
+
+        def _on_group_select(e) -> None:
+            ids = [int(i) for i in (e.args or {}).get('ids', [])]
+            if not ids:
+                return
+            cl_id = _single_list(ids)
+            if cl_id is not None:
+                open_group_dialog(None, ids, cl_id)
+
+        def _open_group_by_id(group_id) -> None:
+            snap = _group_snapshot(int(group_id))
+            if snap is not None:
+                open_group_dialog(snap)
+
+        def toggle_group_mode() -> None:
+            group_mode['v'] = not group_mode['v']
+            ui.run_javascript(f'window.srGroupMode({json.dumps(group_mode["v"])}, "sr-script-host")')
+            render_toolbar()
+
         def _update_cue(cue_id: int, record_undo: bool = True, **fields) -> None:
             """Update one or more fields on a cue."""
             old = _snapshot_cue(cue_id)
@@ -408,6 +732,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 'inline-flex cursor-grab select-none mr-1'
             )
             wrapper._props['draggable'] = 'true'
+            wrapper._props['data-cue-id'] = str(cue_id)
             wrapper.on(
                 'dragstart',
                 js_handler=f'(e) => {{ e.dataTransfer.setData("text/plain", "{cue_id}"); e.dataTransfer.effectAllowed = "move"; }}',
@@ -441,6 +766,13 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         value=c['layer'],
                         label='Layer',
                     ).classes('w-full')
+
+                    if c.get('group_id') is not None:
+                        ui.button(
+                            'Remove from group',
+                            icon='link_off',
+                            on_click=lambda _, cid=c['id']: (_remove_from_group(cid), menu.close(), refresh_all()),
+                        ).props('flat dense')
 
                     with ui.row().classes('w-full justify-between items-center mt-2'):
                         ui.button(
@@ -546,6 +878,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             show_id = selected_show_id['v']
             cl_id, all_lists = _cue_scope(show_id)
             cues = _load_cues(cl_id, all_lists)
+            groups = _load_groups(cl_id, all_lists)
 
             # Index positioned cues by (line, char)
             cues_by_line: dict[int, list[dict]] = {}
@@ -698,6 +1031,35 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                             if c['id'] in previews:
                                 render_preview(previews[c['id']], c)
 
+                # Group boxes: JS measures the chips of each group's cues on this page
+                on_page = {c['id'] for line_idx, _ in page_lines for c in cues_by_line.get(line_idx + 1, [])}
+                depths = group_depths(groups)
+                deepest = max(depths.values(), default=0)
+                boxes = [
+                    {
+                        'id': g['id'],
+                        'name': ' '.join(filter(None, [
+                            _cue_number_label({'number': g['number'], 'point': 0, 'layer': g['layer']})
+                            if g['number'] else '',
+                            g['name'] or '(unnamed)',
+                        ])),
+                        'color': _group_colour(g['color']),
+                        'nest': deepest - depths[g['id']],  # outer boxes sit outside inner ones
+                        'cue_ids': [i for i in g['member_ids'] if i in on_page],
+                    }
+                    for g in sorted(groups, key=lambda g: depths[g['id']])
+                ]
+                boxes = [b for b in boxes if b['cue_ids']]
+                overlay = ui.element('div').props('id=sr-group-overlay').style(
+                    'position: absolute; inset: 0; pointer-events: none;'
+                )
+                overlay.on(
+                    'srgroup',
+                    lambda e: _open_group_by_id(e.args['id']),
+                    js_handler='(e) => emit({id: e.detail})',
+                )
+                ui.timer(0.05, lambda: ui.run_javascript(f'window.srDrawGroups({json.dumps(boxes)})'), once=True)
+
             render_pagination()
 
         def _render_line_with_cues(
@@ -754,7 +1116,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             with ui.element('div').style(
                 f'position: relative; flex: 1; min-width: 0; line-height: {line_height}; '
                 f'font-family: monospace; font-size: 0.875rem; {block_css(styles[kind])}'
-            ):
+            ) as line_el:
+                line_el._props['data-line'] = str(line_num)  # group boxes measure this
                 cursor = 0
                 for pos in sorted(by_char):
                     if pos > cursor:
@@ -926,6 +1289,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             render_toolbar()
             render_script_content()
             render_unpositioned()
+            render_toc()
 
         def go_to_page(page: int):
             page = max(0, min(page, total_pages['v'] - 1))
@@ -942,6 +1306,36 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         go_to_page(idx)
                         return
             go_to_page(total_pages['v'] - 1)
+
+        def go_to_script_line(line: int):
+            """Show *line* from the outline: switch to its page, then scroll its row into view."""
+            go_to_line(line)
+            ui.timer(0.1, lambda: ui.run_javascript(
+                f'document.querySelector(\'[data-line="{line}"]\')?.scrollIntoView({{block: "start"}})'
+            ), once=True)
+
+        def render_toc():
+            """Fill the outline drawer with the script's sections and scene headings, each linked to its line."""
+            container = toc_ref['el']
+            if container is None:
+                return
+            container.clear()
+            sid = selected_script_id['v']
+            with get_db().session() as s:
+                script = s.get(Script, sid) if sid is not None else None
+                content = script.content if script else None
+            lines = content.split('\n') if content else []
+            items = outline(lines, classify_lines(lines))
+            with container:
+                if not items:
+                    ui.label('No sections or scene headings.').classes('text-grey text-sm')
+                for it in items:
+                    ui.button(
+                        it['text'],
+                        on_click=lambda _, ln=it['line']: go_to_script_line(ln),
+                    ).props('flat dense no-caps align=left').style(
+                        f'margin-left: {(it["level"] - 1) * 0.75}rem'
+                    )
 
         def _go_to_page_label(value):
             """Jump to a page by label, finding the nearest match if exact is missing.
@@ -1062,12 +1456,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     new_name = ui.input('New layer name').classes('flex-1')
                     new_type = ui.select(type_labels, value='generic', label='Type').classes('w-40')
                     new_color = ui.input('Colour', value='grey').classes('w-32')
+                    new_prefix = ui.input('Prefix', placeholder='from name').classes('w-32')
 
                     def _add():
                         try:
                             with get_db().session() as s:
                                 add_layer(s, show_id, new_name.value, new_type.value,
-                                          new_color.value, _sr_ui._pm)
+                                          new_color.value, _sr_ui._pm,
+                                          prefix=new_prefix.value.strip() or None)
                         except ValueError as exc:
                             ui.notify(str(exc), type='negative')
                             return
@@ -1076,11 +1472,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
 
                     ui.button('Add', on_click=_add)
 
-            def _save(lid, name, type_, color):
+            def _save(lid, name, type_, color, prefix):
                 try:
                     with get_db().session() as s:
                         update_layer(s, s.get(Layer, lid), _sr_ui._pm,
-                                     name=name, type=type_, color=color)
+                                     name=name, type=type_, color=color, prefix=prefix.strip())
                 except ValueError as exc:
                     ui.notify(str(exc), type='negative')
                     return
@@ -1109,10 +1505,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                             name_in = ui.input('Name', value=r['name']).classes('flex-1')
                             type_in = ui.select(opts, value=r['type'], label='Type').classes('w-40')
                             color_in = ui.input('Colour', value=r['color']).classes('w-32')
+                            prefix_in = ui.input('Prefix', value=r['prefix']).classes('w-24')
                             ui.button(
                                 icon='save',
-                                on_click=lambda _, lid=r['id'], n=name_in, t=type_in, c=color_in:
-                                    _save(lid, n.value, t.value, c.value),
+                                on_click=lambda _, lid=r['id'], n=name_in, t=type_in, c=color_in,
+                                    p=prefix_in: _save(lid, n.value, t.value, c.value, p.value),
                             ).props('flat dense').tooltip('Save')
                             ui.button(
                                 icon='delete', color='red',
@@ -1142,12 +1539,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             increment: int,
             include_unnumbered: bool,
             apply: bool,
-        ) -> list[tuple[int, str, str, dict]]:
-            """Renumber cues on *layer* in the show's scope.
+        ) -> list[tuple[str, int, str, str, dict]]:
+            """Renumber cues and groups on *layer* in the show's scope.
 
-            Returns ``(cue_id, old_label, new_label, state_before)`` per changed cue. Everything
-            runs in one session, so an error in any list changes nothing; the session is only
-            committed when *apply* is true.
+            Returns ``(kind, id, old_label, new_label, state_before)`` per changed item; kind is
+            'cue' or 'group'. Everything runs in one session, so an error in any list changes
+            nothing; the session is only committed when *apply* is true.
             """
             show_id = selected_show_id['v']
             list_ids = _renumber_list_ids(show_id)
@@ -1155,12 +1552,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             with get_db().session() as s:
                 for cl_id in list_ids:
                     before = {
-                        c.id: _cue_state(c)
-                        for c in s.exec(
-                            select(Cue).where(Cue.cue_list_id == cl_id, Cue.layer == layer)
-                        ).all()
+                        ('cue', c.id): _cue_state(c)
+                        for c in s.exec(select(Cue).where(Cue.cue_list_id == cl_id, Cue.layer == layer)).all()
                     }
-                    for cid, old, new in renumber_cues(
+                    before.update({
+                        ('group', g.id): _group_dict(s, g)
+                        for g in s.exec(select(CueGroup).where(CueGroup.cue_list_id == cl_id, CueGroup.layer == layer)).all()
+                    })
+                    for item, old, new in renumber_cues(
                         s,
                         cl_id,
                         layer,
@@ -1169,7 +1568,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         increment=increment,
                         include_unnumbered=include_unnumbered,
                     ):
-                        changes.append((cid, old, new, before[cid]))
+                        kind = 'group' if isinstance(item, CueGroup) else 'cue'
+                        changes.append((kind, item.id, old, new, before[(kind, item.id)]))
                 if apply:
                     s.commit()
             return changes
@@ -1213,7 +1613,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         return
                     ui.label(f'{len(changes)} cues will change:')
                     with ui.scroll_area().style('height: 240px'):
-                        for _, old, new, _before in changes:
+                        for _, _, old, new, _before in changes:
                             ui.label(f'{old or "(unnumbered)"} → {new}')
 
             def _apply():
@@ -1227,12 +1627,18 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     ui.notify('No cues in that range.', type='warning')
                     return
                 layer = layer_in.value
-                for cid, _old, _new, before in changes:
-                    _notify_cue('update', cid, before)
+                for kind, iid, _old, _new, before in changes:
+                    if kind == 'cue':
+                        _notify_cue('update', iid, before)
+                    else:
+                        _notify_group('update', _group_snapshot(iid), before)
 
-                def _restore(items=[(cid, before) for cid, _, _, before in changes]):
-                    for cid, before in items:
-                        _update_cue(cid, False, number=before['number'])
+                def _restore(items=[(kind, iid, before) for kind, iid, _, _, before in changes]):
+                    for kind, iid, before in items:
+                        if kind == 'cue':
+                            _update_cue(iid, False, number=before['number'])
+                        else:
+                            _update_group(iid, number=before['number'])
 
                 _push_undo(f'Renumber {layer} ({len(changes)} cues)', _restore)
                 ui.notify(f'Renumbered {len(changes)} cues')
@@ -1249,7 +1655,7 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     start_in = ui.number('Start at (blank = first in range)', precision=0).classes('flex-1')
                     inc_in = ui.number('Increment', value=1, min=1, precision=0).classes('flex-1')
                 unnumbered_in = ui.checkbox('Include unnumbered cues').tooltip(
-                    'Number unnumbered cues whose script position falls within the range, '
+                    'Number every unnumbered cue on this layer that has a script position, '
                     'in script order. Cues with no script position are skipped.'
                 )
                 ui.separator()
@@ -1270,6 +1676,11 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
             render_toolbar()
             render_script_content()
 
+        def toggle_auto_number():
+            auto_number['v'] = not auto_number['v']
+            nicegui_app.storage.user['auto_number_groups'] = auto_number['v']
+            render_toolbar()
+
         def toggle_previews():
             show_previews['v'] = not show_previews['v']
             nicegui_app.storage.user['show_previews'] = show_previews['v']
@@ -1288,6 +1699,8 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 return
             container.clear()
             with container:
+                ui.button('Outline', icon='toc', on_click=lambda: toc_drawer.toggle()).props('flat dense')
+                ui.separator().props('vertical')
                 ui.label('Current Layer:').classes('text-sm font-bold')
                 for name, info in layers_by_name['v'].items():
                     is_active = selected_layer['v'] == name
@@ -1325,6 +1738,14 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                 )
                 ui.separator().props('vertical')
                 ui.button(
+                    'Group',
+                    icon='crop_free',
+                    on_click=toggle_group_mode,
+                    color='white' if group_mode['v'] else None,
+                ).props('dense unelevated' if group_mode['v'] else 'dense outline').tooltip(
+                    'Drag a box over cues to group them' if not group_mode['v'] else 'Group mode on: drag a box over cues'
+                )
+                ui.button(
                     'Cue Details',
                     icon='visibility' if show_details['v'] else 'visibility_off',
                     on_click=toggle_details,
@@ -1336,6 +1757,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     on_click=toggle_previews,
                     color='white' if show_previews['v'] else None,
                 ).props('dense unelevated' if show_previews['v'] else 'dense outline')
+                ui.button(
+                    'Auto-number groups',
+                    icon='format_list_numbered',
+                    on_click=toggle_auto_number,
+                    color='white' if auto_number['v'] else None,
+                ).props('dense unelevated' if auto_number['v'] else 'dense outline')
                 ui.separator().props('vertical')
                 ui.button(
                     'Add Cue (no position)',
@@ -1466,6 +1893,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                         current_page['v'] = page if isinstance(page, int) and page > 0 else 0
                         list_filter['v'] = flt if isinstance(flt, int) else None
 
+        # Outline drawer: sections and scene headings of the script (filled by render_toc)
+        toc_drawer = ui.left_drawer(value=False, bordered=True)
+        with toc_drawer:
+            ui.label('Outline').classes('text-h6 p-3')
+            toc_ref['el'] = ui.column().classes('w-full gap-0 px-2 pb-4 overflow-auto')
+
         # Toolbar
         toolbar_ref['el'] = ui.row().classes(
             'w-full items-center gap-4 px-4 py-2 bg-gray-900 border-b border-gray-700'
@@ -1480,7 +1913,12 @@ def _build_page(undo_levels: int = DEFAULT_UNDO_LEVELS, plugin_cfg: dict | None 
                     )
                     with ui.scroll_area().classes('w-full h-[calc(100vh-180px)]') as scroll:
                         scroll_ref['el'] = scroll
-                        script_content_ref['el'] = ui.column().classes('w-full p-4')
+                        script_content_ref['el'] = (
+                            ui.column().classes('w-full p-4').props('id=sr-script-host').style('position: relative;')
+                        )
+                        script_content_ref['el'].on(
+                            'srselect', _on_group_select, js_handler='(e) => emit({ids: e.detail})'
+                        )
                     pagination_bottom_ref['el'] = ui.row().classes(
                         'w-full justify-center p-2 border-t border-gray-700'
                     )

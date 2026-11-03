@@ -107,3 +107,37 @@ def test_get_previews_drops_a_plugin_s_malformed_answer_and_keeps_the_others(mon
 
     previews = _get_previews([cue(1, 1)])
     assert [c['text'] for c in previews[1]] == ['a', 'kept']
+
+
+def test_load_groups_and_depths_for_nested_groups(db, monkeypatch):
+    import showrunner.plugins.db as db_module
+    from showrunner.groups import create_group, group_depths
+    from showrunner.models import Cue, CueList, Show
+    from showrunner.plugins.scripter import _load_cues, _load_groups
+
+    monkeypatch.setattr(db_module, '_db', db)
+    with db.session() as s:
+        s.add(Show(name='Hamlet'))
+        s.commit()
+        s.add(CueList(show_id=1, name='Main'))
+        s.commit()
+        s.add_all([Cue(cue_list_id=1, number=i, layer='Lights') for i in (1, 2)])
+        s.commit()
+        outer = create_group(s, 1, [1, 2], name='outer')
+        s.flush()
+        create_group(s, 1, [1], name='inner', parent_id=outer.id)
+        s.commit()
+
+    groups = _load_groups(1)
+    depths = group_depths(groups)
+    by_name = {g['name']: g for g in groups}
+    assert depths[by_name['outer']['id']] == 0
+    assert depths[by_name['inner']['id']] == 1
+    assert sorted(by_name['outer']['member_ids']) == [1, 2]
+    assert _load_cues(1)[0]['group_id'] is not None
+
+
+def test_group_colour_falls_back_to_grey_for_unknown_names():
+    from showrunner.plugins.scripter import _group_colour
+    assert _group_colour('none') == 'grey' and _group_colour(None) == 'grey'
+    assert _group_colour('orange') == 'orange'
