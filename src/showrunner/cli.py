@@ -1044,9 +1044,6 @@ current-show = 1
 # port = 8000
 # storage-secret = "showrunner"
 
-[logging]
-# level = "INFO"
-
 [paths]
 # scripts = "./scripts"
 # exports = "./exports"

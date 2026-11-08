@@ -56,7 +56,6 @@ class TestLoadConfigDefaults:
         assert cfg.server.host == "0.0.0.0"
         assert cfg.server.port == 8000
         assert cfg.server.storage_secret == "showrunner"
-        assert cfg.logging.level == "INFO"
         assert cfg.paths.scripts == "./scripts"
         assert cfg.paths.exports == "./exports"
         assert cfg.plugins.disabled == []
@@ -93,9 +92,6 @@ host = "127.0.0.1"
 port = 9000
 storage-secret = "s3cret"
 
-[logging]
-level = "DEBUG"
-
 [paths]
 scripts = "/opt/scripts"
 exports = "/opt/exports"
@@ -114,7 +110,6 @@ console-ip = "10.0.0.5"
         assert cfg.server.host == "127.0.0.1"
         assert cfg.server.port == 9000
         assert cfg.server.storage_secret == "s3cret"
-        assert cfg.logging.level == "DEBUG"
         assert cfg.paths.scripts == "/opt/scripts"
         assert cfg.paths.exports == "/opt/exports"
         assert cfg.plugins.disabled == ["admin", "recorder"]

@@ -34,12 +34,6 @@ class ServerConfig(BaseModel):
     storage_secret: str = "showrunner"
 
 
-class LoggingConfig(BaseModel):
-    """Logging settings."""
-
-    level: str = "INFO"
-
-
 class PathsConfig(BaseModel):
     """Default directory paths."""
 
@@ -65,7 +59,6 @@ class ShowRunnerConfig(BaseModel):
     current_show: int | None = None
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
-    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     paths: PathsConfig = Field(default_factory=PathsConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
 
@@ -159,7 +152,6 @@ def load_config(path: Path | None = None) -> ShowRunnerConfig:
         server=ServerConfig(
             **{k.replace("-", "_"): v for k, v in raw.get("server", {}).items()}
         ),
-        logging=LoggingConfig(**raw.get("logging", {})),
         paths=PathsConfig(**raw.get("paths", {})),
         plugins=plugins_cfg,
     )
